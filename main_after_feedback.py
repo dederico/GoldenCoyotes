@@ -15,7 +15,7 @@ import os
 import sys
 import threading
 import time
-from flask import Flask, redirect, render_template_string
+from flask import Flask, redirect, render_template_string, session
 import logging
 
 # Add current directory to Python path
@@ -26,69 +26,42 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def create_unified_app():
-    """Create unified Flask app with integrated user and admin services"""
-    from flask import Blueprint
+    """Create unified Flask app - simplified approach"""
 
-    app = Flask(__name__)
-    app.secret_key = os.getenv('SECRET_KEY', 'golden_coyotes_unified_' + str(time.time()))
+    # Simply use the user app as the base and add routes
+    from golden_coyotes_after_feedback import GoldenCoyotesAfterFeedback
 
-    # Import the app instances
-    try:
-        from golden_coyotes_after_feedback import GoldenCoyotesAfterFeedback
-        from web_app_after_feedback import create_admin_app
+    # Create user platform - this gives us a Flask app with all routes
+    user_platform = GoldenCoyotesAfterFeedback()
+    app = user_platform.app
 
-        # Get user app instance - GoldenCoyotesAfterFeedback is a class with .app attribute
-        user_platform = GoldenCoyotesAfterFeedback()
-        user_app_instance = user_platform.app
+    # Add landing page route
+    @app.route('/landing')
+    def landing():
+        """Main landing page"""
+        return render_template_string(UNIFIED_LANDING_TEMPLATE)
 
-        admin_app_instance = create_admin_app()
-
-        # Copy user app context and configuration
-        app.config.update(user_app_instance.config)
-
-        # Register user routes under /user prefix
-        for rule in user_app_instance.url_map.iter_rules():
-            if rule.endpoint != 'static':
-                # Get the view function
-                view_func = user_app_instance.view_functions[rule.endpoint]
-                # Register with /user prefix
-                new_rule = f'/user{rule.rule}' if rule.rule != '/' else '/user'
-                app.add_url_rule(
-                    new_rule,
-                    endpoint=f'user_{rule.endpoint}',
-                    view_func=view_func,
-                    methods=rule.methods
-                )
-
-        # Register admin routes under /admin prefix
-        for rule in admin_app_instance.url_map.iter_rules():
-            if rule.endpoint != 'static':
-                view_func = admin_app_instance.view_functions[rule.endpoint]
-                new_rule = f'/admin{rule.rule}' if rule.rule != '/' else '/admin'
-                app.add_url_rule(
-                    new_rule,
-                    endpoint=f'admin_{rule.endpoint}',
-                    view_func=view_func,
-                    methods=rule.methods
-                )
-
-        logger.info(f"✅ Registered {len(user_app_instance.url_map._rules)} user routes")
-        logger.info(f"✅ Registered {len(admin_app_instance.url_map._rules)} admin routes")
-
-    except Exception as e:
-        logger.error(f"❌ Error registering apps: {e}")
-        import traceback
-        traceback.print_exc()
+    # Redirect root to landing
+    original_index = app.view_functions.get('index')
 
     @app.route('/')
     def index():
-        """Main landing page with links to both interfaces"""
-        return render_template_string(UNIFIED_LANDING_TEMPLATE)
+        """Root redirects to welcome or dashboard"""
+        if 'user_id' in session:
+            # User is logged in, show their dashboard
+            if original_index:
+                return original_index()
+            return redirect('/dashboard')
+        else:
+            # Not logged in, show landing
+            return render_template_string(UNIFIED_LANDING_TEMPLATE)
 
     @app.route('/health')
     def health():
         """Health check endpoint for Render.com"""
-        return {'status': 'healthy', 'services': ['user_app', 'admin_app']}, 200
+        return {'status': 'healthy', 'app': 'golden_coyotes'}, 200
+
+    logger.info(f"✅ Unified app created with {len(app.url_map._rules)} routes")
 
     return app
 
@@ -245,7 +218,7 @@ UNIFIED_LANDING_TEMPLATE = '''
                     <div class="row justify-content-center">
                         <!-- User Interface -->
                         <div class="col-md-5 mb-4">
-                            <div class="card service-card user-card h-100" onclick="window.location.href='/user'">
+                            <div class="card service-card user-card h-100" onclick="window.location.href='/register'">
                                 <div class="card-body text-center p-5">
                                     <i class="fas fa-users fa-5x mb-4"></i>
                                     <h3 class="card-title">Interfaz de Usuario</h3>
@@ -282,7 +255,7 @@ UNIFIED_LANDING_TEMPLATE = '''
                         
                         <!-- Admin Interface -->
                         <div class="col-md-5 mb-4">
-                            <div class="card service-card admin-card h-100" onclick="window.location.href='/admin'">
+                            <div class="card service-card admin-card h-100" onclick="alert('Panel de administrador - Próximamente')"
                                 <div class="card-body text-center p-5">
                                     <i class="fas fa-crown fa-5x mb-4"></i>
                                     <h3 class="card-title">Panel de Administrador</h3>
