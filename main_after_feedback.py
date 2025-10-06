@@ -37,9 +37,14 @@ def create_unified_app():
         from golden_coyotes_after_feedback import GoldenCoyotesAfterFeedback
         from web_app_after_feedback import create_admin_app
 
-        # Get user app instance
-        user_app_instance = GoldenCoyotesAfterFeedback()
+        # Get user app instance - GoldenCoyotesAfterFeedback is a class with .app attribute
+        user_platform = GoldenCoyotesAfterFeedback()
+        user_app_instance = user_platform.app
+
         admin_app_instance = create_admin_app()
+
+        # Copy user app context and configuration
+        app.config.update(user_app_instance.config)
 
         # Register user routes under /user prefix
         for rule in user_app_instance.url_map.iter_rules():
@@ -47,8 +52,9 @@ def create_unified_app():
                 # Get the view function
                 view_func = user_app_instance.view_functions[rule.endpoint]
                 # Register with /user prefix
+                new_rule = f'/user{rule.rule}' if rule.rule != '/' else '/user'
                 app.add_url_rule(
-                    f'/user{rule.rule}',
+                    new_rule,
                     endpoint=f'user_{rule.endpoint}',
                     view_func=view_func,
                     methods=rule.methods
@@ -58,15 +64,21 @@ def create_unified_app():
         for rule in admin_app_instance.url_map.iter_rules():
             if rule.endpoint != 'static':
                 view_func = admin_app_instance.view_functions[rule.endpoint]
+                new_rule = f'/admin{rule.rule}' if rule.rule != '/' else '/admin'
                 app.add_url_rule(
-                    f'/admin{rule.rule}',
+                    new_rule,
                     endpoint=f'admin_{rule.endpoint}',
                     view_func=view_func,
                     methods=rule.methods
                 )
 
+        logger.info(f"✅ Registered {len(user_app_instance.url_map._rules)} user routes")
+        logger.info(f"✅ Registered {len(admin_app_instance.url_map._rules)} admin routes")
+
     except Exception as e:
-        logger.error(f"Error registering apps: {e}")
+        logger.error(f"❌ Error registering apps: {e}")
+        import traceback
+        traceback.print_exc()
 
     @app.route('/')
     def index():
