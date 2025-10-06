@@ -13,9 +13,9 @@ SQLAlchemy==2.0.21
 email-validator==2.0.0
 
 # AI and Machine Learning
-scikit-learn==1.3.0
-numpy==1.24.3
-pandas==2.0.3
+scikit-learn==1.5.0
+numpy==1.26.4
+pandas==2.2.0
 
 # Text processing for AI matching
 nltk==3.8.1
