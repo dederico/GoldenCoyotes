@@ -1,0 +1,47 @@
+# Render.com Deployment Configuration
+# Golden Coyotes After Feedback - Single Instance Setup
+
+services:
+  - type: web
+    name: golden-coyotes-after-feedback
+    env: python
+    plan: free  # or starter for production
+    buildCommand: "pip install -r requirements_after_feedback.txt"
+    startCommand: "python main_after_feedback.py"
+    envVars:
+      - key: RENDER
+        value: "true"
+      - key: RUN_MODE
+        value: "unified"
+      - key: FLASK_ENV
+        value: "production"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        value: "sqlite:///golden_coyotes_after_feedback.db"
+      # Email configuration (optional)
+      - key: SMTP_SERVER
+        value: "smtp.gmail.com"
+      - key: SMTP_PORT
+        value: "587"
+      # Add your email credentials as secret environment variables in Render dashboard
+      # - SMTP_USERNAME (set in Render dashboard)
+      # - SMTP_PASSWORD (set in Render dashboard)
+    
+    # Disk storage for SQLite database
+    disk:
+      name: golden-coyotes-db
+      mountPath: /opt/render/project/src
+      sizeGB: 1
+
+    # Health check configuration
+    healthCheckPath: /health
+    
+    # Port configuration (Render assigns port automatically)
+    # Our app uses PORT environment variable
+
+# Database configuration
+databases:
+  - name: golden-coyotes-db-disk
+    databaseName: golden_coyotes_after_feedback
+    user: golden_coyotes_user
