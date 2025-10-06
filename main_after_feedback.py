@@ -27,19 +27,34 @@ logger = logging.getLogger(__name__)
 
 def create_unified_app():
     """Create unified Flask app that redirects to user and admin interfaces"""
+    from flask import request
+    import requests as http_requests
+
     app = Flask(__name__)
     app.secret_key = os.getenv('SECRET_KEY', 'golden_coyotes_unified_' + str(time.time()))
-    
+
     @app.route('/')
     def index():
         """Main landing page with links to both interfaces"""
         return render_template_string(UNIFIED_LANDING_TEMPLATE)
-    
+
+    @app.route('/user')
+    @app.route('/user/<path:path>')
+    def user_proxy(path=''):
+        """Proxy requests to user service"""
+        return redirect(f'http://localhost:5001/{path}', code=302)
+
+    @app.route('/admin')
+    @app.route('/admin/<path:path>')
+    def admin_proxy(path=''):
+        """Proxy requests to admin service"""
+        return redirect(f'http://localhost:8081/{path}', code=302)
+
     @app.route('/health')
     def health():
         """Health check endpoint for Render.com"""
         return {'status': 'healthy', 'services': ['user_app', 'admin_app']}, 200
-    
+
     return app
 
 def start_user_service():
@@ -201,7 +216,7 @@ UNIFIED_LANDING_TEMPLATE = '''
                     <div class="row justify-content-center">
                         <!-- User Interface -->
                         <div class="col-md-5 mb-4">
-                            <div class="card service-card user-card h-100" onclick="window.open(':5001', '_blank')">
+                            <div class="card service-card user-card h-100" onclick="window.location.href='/user'">
                                 <div class="card-body text-center p-5">
                                     <i class="fas fa-users fa-5x mb-4"></i>
                                     <h3 class="card-title">Interfaz de Usuario</h3>
@@ -238,7 +253,7 @@ UNIFIED_LANDING_TEMPLATE = '''
                         
                         <!-- Admin Interface -->
                         <div class="col-md-5 mb-4">
-                            <div class="card service-card admin-card h-100" onclick="window.open(':8081', '_blank')">
+                            <div class="card service-card admin-card h-100" onclick="window.location.href='/admin'">
                                 <div class="card-body text-center p-5">
                                     <i class="fas fa-crown fa-5x mb-4"></i>
                                     <h3 class="card-title">Panel de Administrador</h3>
