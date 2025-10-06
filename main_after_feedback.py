@@ -26,29 +26,52 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def create_unified_app():
-    """Create unified Flask app that redirects to user and admin interfaces"""
-    from flask import request
-    import requests as http_requests
+    """Create unified Flask app with integrated user and admin services"""
+    from flask import Blueprint
 
     app = Flask(__name__)
     app.secret_key = os.getenv('SECRET_KEY', 'golden_coyotes_unified_' + str(time.time()))
+
+    # Import the app instances
+    try:
+        from golden_coyotes_after_feedback import GoldenCoyotesAfterFeedback
+        from web_app_after_feedback import create_admin_app
+
+        # Get user app instance
+        user_app_instance = GoldenCoyotesAfterFeedback()
+        admin_app_instance = create_admin_app()
+
+        # Register user routes under /user prefix
+        for rule in user_app_instance.url_map.iter_rules():
+            if rule.endpoint != 'static':
+                # Get the view function
+                view_func = user_app_instance.view_functions[rule.endpoint]
+                # Register with /user prefix
+                app.add_url_rule(
+                    f'/user{rule.rule}',
+                    endpoint=f'user_{rule.endpoint}',
+                    view_func=view_func,
+                    methods=rule.methods
+                )
+
+        # Register admin routes under /admin prefix
+        for rule in admin_app_instance.url_map.iter_rules():
+            if rule.endpoint != 'static':
+                view_func = admin_app_instance.view_functions[rule.endpoint]
+                app.add_url_rule(
+                    f'/admin{rule.rule}',
+                    endpoint=f'admin_{rule.endpoint}',
+                    view_func=view_func,
+                    methods=rule.methods
+                )
+
+    except Exception as e:
+        logger.error(f"Error registering apps: {e}")
 
     @app.route('/')
     def index():
         """Main landing page with links to both interfaces"""
         return render_template_string(UNIFIED_LANDING_TEMPLATE)
-
-    @app.route('/user')
-    @app.route('/user/<path:path>')
-    def user_proxy(path=''):
-        """Proxy requests to user service"""
-        return redirect(f'http://localhost:5001/{path}', code=302)
-
-    @app.route('/admin')
-    @app.route('/admin/<path:path>')
-    def admin_proxy(path=''):
-        """Proxy requests to admin service"""
-        return redirect(f'http://localhost:8081/{path}', code=302)
 
     @app.route('/health')
     def health():
@@ -116,19 +139,13 @@ def main():
     
     if is_render_deployment or run_mode == 'unified':
         logger.info("🌐 Running in UNIFIED mode for Render.com deployment")
-        
-        # Start user and admin services in background threads
-        user_thread = threading.Thread(target=start_user_service, daemon=True)
-        admin_thread = threading.Thread(target=start_admin_service, daemon=True)
-        
-        user_thread.start()
-        admin_thread.start()
-        
-        # Wait a bit for services to start
-        time.sleep(2)
-        
-        # Start unified landing service (this blocks)
-        start_unified_service()
+
+        # Create and run the unified app directly (no separate threads needed)
+        unified_app = create_unified_app()
+        port = int(os.getenv('PORT', 10000))
+
+        logger.info(f"🚀 Starting Unified App on port {port}")
+        unified_app.run(host='0.0.0.0', port=port, debug=False)
         
     else:
         # Development mode - choose which service to run
