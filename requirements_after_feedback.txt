@@ -30,8 +30,8 @@ python-dateutil==2.8.2
 python-dotenv==1.0.0
 
 # File handling and utilities
-Pillow==10.0.0
-python-magic==0.4.27
+Pillow==11.0.0
+python-magic-bin==0.4.14
 
 # Production WSGI server (for Render.com)
 gunicorn==21.2.0
