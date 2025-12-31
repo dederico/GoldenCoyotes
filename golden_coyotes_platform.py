@@ -1796,15 +1796,15 @@ NETWORK_TEMPLATE = '''
         }
 
         function shareOnLinkedIn() {
-            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref={{ session.user_id }}');
+            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref=' + '{{ session.user_id }}');
             const text = encodeURIComponent('Join me on Golden Coyotes - A professional networking platform for business opportunities!');
-            const linkedInUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${inviteUrl}`;
+            const linkedInUrl = 'https://www.linkedin.com/sharing/share-offsite/?url=' + inviteUrl;
             window.open(linkedInUrl, '_blank', 'width=600,height=400');
         }
 
         function shareOnFacebook() {
-            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref={{ session.user_id }}');
-            const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${inviteUrl}`;
+            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref=' + '{{ session.user_id }}');
+            const facebookUrl = 'https://www.facebook.com/sharer/sharer.php?u=' + inviteUrl;
             window.open(facebookUrl, '_blank', 'width=600,height=400');
         }
 
