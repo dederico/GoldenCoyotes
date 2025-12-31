@@ -4,6 +4,9 @@ Golden Coyotes Platform - Complete Multi-User Business Intelligence Platform
 Real user authentication, database persistence, AI matching, and email notifications
 """
 
+print("🚀 Iniciando Golden Coyotes Platform...", flush=True)
+print("📦 Cargando dependencias (esto puede tardar 30-60 segundos)...\n", flush=True)
+
 import json
 import logging
 import os
@@ -11,16 +14,26 @@ import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 
+print("  ✓ Dependencias básicas cargadas", flush=True)
+
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_cors import CORS
 
+print("  ✓ Flask cargado", flush=True)
+
 from database_setup import DatabaseManager
+print("  ✓ DatabaseManager cargado", flush=True)
+
 from email_service import EmailService
+print("  ✓ EmailService cargado", flush=True)
+
 from ai_matching_engine import AIMatchingEngine
 from admin_templates import (
-    ADMIN_LOGIN_TEMPLATE, ADMIN_DASHBOARD_TEMPLATE, 
+    ADMIN_LOGIN_TEMPLATE, ADMIN_DASHBOARD_TEMPLATE,
     ADMIN_USERS_TEMPLATE, ADMIN_OPPORTUNITIES_TEMPLATE, ADMIN_LOGS_TEMPLATE
 )
+
+print("  ✓ Todos los módulos cargados\n", flush=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

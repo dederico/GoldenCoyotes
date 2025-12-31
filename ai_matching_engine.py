@@ -4,6 +4,9 @@ AI-Powered Matching Engine for Golden Coyotes Platform
 Real intelligent matching using OpenAI embeddings and ML algorithms
 """
 
+import sys
+print("⏳ Cargando módulos de IA... (esto puede tardar 20-30 segundos)", flush=True)
+
 import openai
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -14,6 +17,7 @@ import logging
 from datetime import datetime, timedelta
 import os
 
+print("✅ Módulos de IA cargados correctamente", flush=True)
 logger = logging.getLogger(__name__)
 
 class AIMatchingEngine:
