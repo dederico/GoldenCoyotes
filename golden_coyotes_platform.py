@@ -1752,7 +1752,7 @@ NETWORK_TEMPLATE = '''
 
             // Parse email addresses (split by comma, newline, or semicolon)
             const emails = emailsText
-                .split(/[,;\n]/)
+                .split(/[,;\\n]/)
                 .map(e => e.trim())
                 .filter(e => e.length > 0);
 
