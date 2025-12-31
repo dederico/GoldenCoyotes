@@ -386,7 +386,70 @@ class GoldenCoyotesPlatform:
                 return jsonify({'success': True, 'message_id': message_id})
             else:
                 return jsonify({'error': 'Failed to send message'}), 500
-        
+
+        @self.app.route('/api/invite-friends', methods=['POST'])
+        @self.require_login
+        def api_invite_friends():
+            """Send invitations to friends via email"""
+            try:
+                data = request.get_json()
+
+                if not data or not data.get('emails'):
+                    return jsonify({'error': 'emails is required'}), 400
+
+                emails = data['emails']
+                personal_message = data.get('message', '')
+
+                # Get current user info
+                current_user = self.db.get_user(session['user_id'])
+                if not current_user:
+                    return jsonify({'error': 'User not found'}), 404
+
+                # Send invitations
+                sent_count = 0
+                failed_emails = []
+
+                for email in emails:
+                    try:
+                        # Create invitation link with referral code
+                        invite_link = f"http://localhost:8080/register?ref={session['user_id']}"
+
+                        # Send invitation email
+                        success = self.email_service.send_invitation_email(
+                            recipient_email=email,
+                            inviter_name=current_user['name'],
+                            inviter_company=current_user.get('company', ''),
+                            personal_message=personal_message,
+                            invite_link=invite_link
+                        )
+
+                        if success:
+                            sent_count += 1
+                        else:
+                            failed_emails.append(email)
+
+                    except Exception as e:
+                        logger.error(f"Failed to send invitation to {email}: {e}")
+                        failed_emails.append(email)
+
+                if sent_count > 0:
+                    return jsonify({
+                        'success': True,
+                        'sent_count': sent_count,
+                        'failed_count': len(failed_emails),
+                        'failed_emails': failed_emails
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Failed to send invitations',
+                        'failed_emails': failed_emails
+                    }), 500
+
+            except Exception as e:
+                logger.error(f"Error in invite-friends endpoint: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @self.app.route('/api/messages/<user_id>')
         @self.require_login
         def api_get_messages(user_id):
@@ -1518,7 +1581,34 @@ NETWORK_TEMPLATE = '''
             <!-- Main Content -->
             <div class="col-md-10 content p-4">
                 <h1><i class="fas fa-users"></i> Professional Network</h1>
-                
+
+                <!-- Invite Friends Section -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card border-0 shadow-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                            <div class="card-body text-white p-4">
+                                <div class="row align-items-center">
+                                    <div class="col-md-6">
+                                        <h4><i class="fas fa-user-plus"></i> Grow Your Network</h4>
+                                        <p class="mb-0">Invite your friends and colleagues to join Golden Coyotes</p>
+                                    </div>
+                                    <div class="col-md-6 text-md-end">
+                                        <button class="btn btn-light btn-lg me-2 mb-2" onclick="openInviteModal()">
+                                            <i class="fas fa-envelope"></i> Invite by Email
+                                        </button>
+                                        <button class="btn btn-outline-light btn-lg me-2 mb-2" onclick="shareOnLinkedIn()">
+                                            <i class="fab fa-linkedin"></i> Share on LinkedIn
+                                        </button>
+                                        <button class="btn btn-outline-light btn-lg mb-2" onclick="shareOnFacebook()">
+                                            <i class="fab fa-facebook"></i> Share on Facebook
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="row">
                     <!-- My Connections -->
                     <div class="col-md-6 mb-4">
@@ -1601,9 +1691,123 @@ NETWORK_TEMPLATE = '''
             </div>
         </div>
     </div>
-    
+
+    <!-- Invite Friends Modal -->
+    <div class="modal fade" id="inviteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="fas fa-envelope"></i> Invite Friends by Email</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="inviteForm">
+                        <div class="mb-3">
+                            <label class="form-label">Email Addresses</label>
+                            <textarea class="form-control" id="emailAddresses" rows="4"
+                                      placeholder="Enter email addresses (one per line or comma-separated)&#10;ejemplo@email.com, amigo@email.com"
+                                      required></textarea>
+                            <small class="text-muted">You can enter multiple email addresses separated by commas or new lines</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Personal Message (Optional)</label>
+                            <textarea class="form-control" id="inviteMessage" rows="3"
+                                      placeholder="Add a personal message to your invitation..."></textarea>
+                        </div>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> Your friends will receive an email invitation to join Golden Coyotes and connect with you.
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="sendInvitations()">
+                        <i class="fas fa-paper-plane"></i> Send Invitations
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        let inviteModal;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            inviteModal = new bootstrap.Modal(document.getElementById('inviteModal'));
+        });
+
+        function openInviteModal() {
+            inviteModal.show();
+        }
+
+        function sendInvitations() {
+            const emailsText = document.getElementById('emailAddresses').value.trim();
+            const message = document.getElementById('inviteMessage').value.trim();
+
+            if (!emailsText) {
+                alert('Please enter at least one email address');
+                return;
+            }
+
+            // Parse email addresses (split by comma, newline, or semicolon)
+            const emails = emailsText
+                .split(/[,;\n]/)
+                .map(e => e.trim())
+                .filter(e => e.length > 0);
+
+            if (emails.length === 0) {
+                alert('Please enter valid email addresses');
+                return;
+            }
+
+            // Validate email format
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            const invalidEmails = emails.filter(e => !emailRegex.test(e));
+
+            if (invalidEmails.length > 0) {
+                alert('Invalid email addresses found: ' + invalidEmails.join(', '));
+                return;
+            }
+
+            // Send invitations
+            fetch('/api/invite-friends', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    emails: emails,
+                    message: message
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✅ Successfully sent ${data.sent_count} invitation(s)!`);
+                    inviteModal.hide();
+                    document.getElementById('inviteForm').reset();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to send invitations'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Network error occurred. Please try again.');
+            });
+        }
+
+        function shareOnLinkedIn() {
+            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref={{ session.user_id }}');
+            const text = encodeURIComponent('Join me on Golden Coyotes - A professional networking platform for business opportunities!');
+            const linkedInUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${inviteUrl}`;
+            window.open(linkedInUrl, '_blank', 'width=600,height=400');
+        }
+
+        function shareOnFacebook() {
+            const inviteUrl = encodeURIComponent(window.location.origin + '/register?ref={{ session.user_id }}');
+            const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${inviteUrl}`;
+            window.open(facebookUrl, '_blank', 'width=600,height=400');
+        }
+
         function connectUser(userId) {
             const message = prompt('Add a personal message (optional):');
             if (message !== null) {

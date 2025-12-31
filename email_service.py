@@ -136,7 +136,81 @@ class EmailService:
         )
         
         return self.send_email(user_email, subject, html_content)
-    
+
+    def send_invitation_email(self, recipient_email, inviter_name, inviter_company="", personal_message="", invite_link=""):
+        """Send invitation email to friend"""
+        subject = f"{inviter_name} invited you to join Golden Coyotes! 🎉"
+
+        # Create HTML content
+        html_content = f'''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Join Golden Coyotes</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f8f9fa; padding: 30px; }}
+                .button {{ display: inline-block; background: #667eea; color: white; padding: 15px 40px; text-decoration: none; border-radius: 30px; margin: 20px 0; font-weight: bold; font-size: 16px; }}
+                .button:hover {{ background: #5568d3; }}
+                .personal-message {{ background: #fff; border-left: 4px solid #667eea; padding: 15px; margin: 20px 0; font-style: italic; }}
+                .features {{ background: white; padding: 20px; border-radius: 10px; margin: 20px 0; }}
+                .feature-item {{ padding: 10px 0; }}
+                .footer {{ background: #333; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🤝 You're Invited!</h1>
+                    <p>Join the Golden Coyotes Professional Network</p>
+                </div>
+                <div class="content">
+                    <h2>Hello!</h2>
+                    <p><strong>{inviter_name}</strong>{" from " + inviter_company if inviter_company else ""} thinks you would be a great fit for Golden Coyotes - a professional networking platform for business opportunities and meaningful connections.</p>
+
+                    {f'<div class="personal-message"><strong>Personal message from {inviter_name}:</strong><br>"{personal_message}"</div>' if personal_message else ''}
+
+                    <div class="features">
+                        <h3>✨ What you'll get:</h3>
+                        <div class="feature-item">🎯 <strong>AI-Powered Matching</strong> - Get personalized opportunity recommendations</div>
+                        <div class="feature-item">💼 <strong>Business Opportunities</strong> - Discover partnerships, investments, and collaborations</div>
+                        <div class="feature-item">🌐 <strong>Professional Network</strong> - Connect with like-minded professionals</div>
+                        <div class="feature-item">📊 <strong>Smart Analytics</strong> - Track your network growth and engagement</div>
+                        <div class="feature-item">🔔 <strong>Real-time Notifications</strong> - Never miss an opportunity</div>
+                    </div>
+
+                    <center>
+                        <a href="{invite_link}" class="button">Join Golden Coyotes Now</a>
+                    </center>
+
+                    <p style="text-align: center; color: #666; font-size: 14px;">
+                        Click the button above to create your account and start building your professional network!
+                    </p>
+
+                    <p style="margin-top: 30px;">
+                        Golden Coyotes is a platform designed to help professionals like you discover meaningful business opportunities, build valuable connections, and grow your network with the power of AI.
+                    </p>
+
+                    <p><strong>Join today and start your journey!</strong></p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Golden Coyotes Platform. All rights reserved.</p>
+                    <p style="margin-top: 10px;">
+                        <a href="{invite_link}" style="color: #667eea;">Create Account</a> |
+                        <a href="http://localhost:8080" style="color: #667eea;">Learn More</a>
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        '''
+
+        return self.send_email(recipient_email, subject, html_content)
+
     def get_welcome_template(self):
         """Welcome email template"""
         return '''
