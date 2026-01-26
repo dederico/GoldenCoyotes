@@ -26,6 +26,7 @@ class EmailService:
         self.email_address = os.getenv('EMAIL_ADDRESS', 'your-email@gmail.com')
         self.email_password = os.getenv('EMAIL_PASSWORD', 'your-app-password')
         self.sender_name = os.getenv('SENDER_NAME', 'Golden Coyotes Platform')
+        self.platform_url = os.getenv('PLATFORM_URL', 'http://localhost:8080')
         
         # Email templates
         self.templates = {
@@ -73,7 +74,7 @@ class EmailService:
         subject = "Welcome to Golden Coyotes Platform! 🎉"
         html_content = self.templates['welcome'].format(
             user_name=user_name,
-            platform_url="http://localhost:8080",
+            platform_url=self.platform_url,
             year=datetime.now().year
         )
         
@@ -87,7 +88,7 @@ class EmailService:
             opportunity_title=opportunity_title,
             match_score=int(match_score * 100),
             opportunity_url=opportunity_url,
-            platform_url="http://localhost:8080",
+            platform_url=self.platform_url,
             year=datetime.now().year
         )
         
@@ -101,8 +102,8 @@ class EmailService:
             requester_name=requester_name,
             requester_profile_url=requester_profile_url,
             personal_message=message if message else "No personal message included.",
-            connections_url="http://localhost:8080/connections",
-            platform_url="http://localhost:8080",
+            connections_url=f"{self.platform_url}/connections",
+            platform_url=self.platform_url,
             year=datetime.now().year
         )
         
@@ -116,7 +117,7 @@ class EmailService:
             sender_name=sender_name,
             message_subject=message_subject,
             message_url=message_url,
-            platform_url="http://localhost:8080",
+            platform_url=self.platform_url,
             year=datetime.now().year
         )
         
@@ -131,7 +132,7 @@ class EmailService:
             new_connections=stats.get('new_connections', 0),
             profile_views=stats.get('profile_views', 0),
             messages_received=stats.get('messages_received', 0),
-            platform_url="http://localhost:8080",
+            platform_url=self.platform_url,
             year=datetime.now().year
         )
         
@@ -140,6 +141,8 @@ class EmailService:
     def send_invitation_email(self, recipient_email, inviter_name, inviter_company="", personal_message="", invite_link=""):
         """Send invitation email to friend"""
         subject = f"{inviter_name} invited you to join Golden Coyotes! 🎉"
+        if not invite_link:
+            invite_link = f"{self.platform_url}/register"
 
         # Create HTML content
         html_content = f'''
@@ -201,7 +204,7 @@ class EmailService:
                     <p>&copy; {datetime.now().year} Golden Coyotes Platform. All rights reserved.</p>
                     <p style="margin-top: 10px;">
                         <a href="{invite_link}" style="color: #667eea;">Create Account</a> |
-                        <a href="http://localhost:8080" style="color: #667eea;">Learn More</a>
+                        <a href="{self.platform_url}" style="color: #667eea;">Learn More</a>
                     </p>
                 </div>
             </div>

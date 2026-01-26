@@ -70,29 +70,43 @@ class GoldenCoyotesAfterFeedback:
             """Registro de usuario con términos y políticas"""
             if request.method == 'POST':
                 data = request.form.to_dict()  # Usar form data para registro
+                ref_code = data.get('ref') or request.args.get('ref')
                 
                 # Validar campos requeridos
                 if not data.get('name') or not data.get('email') or not data.get('password'):
                     flash('Por favor completa todos los campos requeridos', 'error')
                     return render_template_string(REGISTER_TEMPLATE)
                 
-                # Mock user creation - en producción guardar en base de datos real
-                user_data = {
-                    'id': 'user_' + data.get('email').split('@')[0],
-                    'name': data.get('name'),
-                    'email': data.get('email'),
-                    'phone': data.get('phone', ''),
-                    'industry_preferences': data.get('industry_preferences', '').split(',') if data.get('industry_preferences') else [],
-                    'accepted_terms': data.get('accepted_terms') == 'on',
-                    'accepted_privacy': data.get('accepted_privacy') == 'on',
-                    'safe_contact_agreement': data.get('safe_contact_agreement') == 'on',
-                    'created_at': datetime.now().isoformat()
-                }
-                
-                flash('¡Registro exitoso! Ahora puedes iniciar sesión.', 'success')
-                return redirect(url_for('login'))
+                user_id = self.db.create_user(
+                    email=data.get('email'),
+                    password=data.get('password'),
+                    name=data.get('name'),
+                    phone=data.get('phone', ''),
+                    interests=data.get('industry_preferences', '')
+                )
+
+                if not user_id:
+                    flash('El email ya existe o el registro falló', 'error')
+                    return render_template_string(REGISTER_TEMPLATE, ref_code=ref_code or '')
+
+                if ref_code and ref_code != user_id:
+                    inviter = self.db.get_user(ref_code)
+                    if inviter:
+                        self.db.create_connection(
+                            ref_code,
+                            user_id,
+                            message="Invitación aceptada automáticamente",
+                            status="accepted",
+                            accepted_at=datetime.now().isoformat()
+                        )
+
+                session['user_id'] = user_id
+                session['user_name'] = data.get('name')
+                flash('¡Registro exitoso! Bienvenido a Golden Coyotes.', 'success')
+                return redirect(url_for('dashboard'))
             
-            return render_template_string(REGISTER_TEMPLATE)
+            ref_code = request.args.get('ref', '')
+            return render_template_string(REGISTER_TEMPLATE, ref_code=ref_code)
         
         @self.app.route('/login', methods=['GET', 'POST'])
         def login():
@@ -102,19 +116,14 @@ class GoldenCoyotesAfterFeedback:
                 email = data.get('email')
                 password = data.get('password')
                 
-                # Mock authentication - en producción usar base de datos real
                 if email and password:
-                    # Crear usuario mock si no existe
-                    mock_user = {
-                        'id': 'user_' + email.split('@')[0],
-                        'name': email.split('@')[0].title(),
-                        'email': email
-                    }
-                    
-                    session['user_id'] = mock_user['id']
-                    session['user_name'] = mock_user['name']
-                    flash('¡Bienvenido a Golden Coyotes!', 'success')
-                    return redirect(url_for('dashboard'))
+                    user = self.db.authenticate_user(email, password)
+                    if user:
+                        session['user_id'] = user['id']
+                        session['user_name'] = user['name']
+                        flash('¡Bienvenido a Golden Coyotes!', 'success')
+                        return redirect(url_for('dashboard'))
+                    flash('Credenciales incorrectas', 'error')
                 else:
                     flash('Por favor ingresa email y contraseña', 'error')
             
@@ -266,9 +275,47 @@ class GoldenCoyotesAfterFeedback:
         @self.require_login
         def invitar_contactos():
             """Sistema de invitaciones a WhatsApp, Facebook, LinkedIn, Instagram"""
-            return render_template_string(INVITAR_CONTACTOS_TEMPLATE)
+            base_url = request.host_url.rstrip('/')
+            invite_link = f"{base_url}/register?ref={session['user_id']}"
+            inviter_name = session.get('user_name', 'Golden Coyotes')
+            return render_template_string(
+                INVITAR_CONTACTOS_TEMPLATE,
+                invite_link=invite_link,
+                inviter_name=inviter_name
+            )
         
         # ==================== API ENDPOINTS ====================
+        @self.app.route('/api/send-invitation-email', methods=['POST'])
+        @self.require_login
+        def send_invitation_email():
+            """Enviar invitación por correo"""
+            data = request.get_json() or request.form.to_dict()
+            recipient_email = (data.get('email') or '').strip()
+            personal_message = (data.get('message') or '').strip()
+
+            if not recipient_email:
+                return jsonify({'success': False, 'error': 'Email requerido'}), 400
+
+            inviter = self.db.get_user(session['user_id'])
+            inviter_name = inviter['name'] if inviter else session.get('user_name', 'Golden Coyotes')
+            inviter_company = inviter.get('company', '') if inviter else ''
+            invite_link = f"{request.host_url.rstrip('/')}/register?ref={session['user_id']}"
+
+            success = self.email_service.send_invitation_email(
+                recipient_email=recipient_email,
+                inviter_name=inviter_name,
+                inviter_company=inviter_company,
+                personal_message=personal_message,
+                invite_link=invite_link
+            )
+
+            if success:
+                return jsonify({'success': True})
+
+            return jsonify({
+                'success': False,
+                'error': 'No se pudo enviar el correo. Verifica credenciales SMTP.'
+            }), 500
         @self.app.route('/api/mark-interest', methods=['POST'])
         @self.require_login
         def mark_interest():
@@ -585,6 +632,7 @@ REGISTER_TEMPLATE = '''
                     </div>
 
                     <form id="registerForm" method="POST">
+                        <input type="hidden" name="ref" value="{{ ref_code }}">
                         <!-- Datos Personales -->
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -2088,12 +2136,15 @@ INVITAR_CONTACTOS_TEMPLATE = '''
                 <div class="card">
                     <div class="card-body">
                         <h5><i class="fas fa-envelope"></i> Invitación Manual</h5>
-                        <form>
+                        <form id="emailInviteForm">
                             <div class="row">
-                                <div class="col-md-8">
-                                    <input type="email" class="form-control" placeholder="email@ejemplo.com">
+                                <div class="col-md-8 mb-2">
+                                    <input type="email" class="form-control" name="email" placeholder="email@ejemplo.com" required>
                                 </div>
-                                <div class="col-md-4">
+                                <div class="col-md-8 mb-2">
+                                    <textarea class="form-control" name="message" rows="2" placeholder="Mensaje personal (opcional)"></textarea>
+                                </div>
+                                <div class="col-md-4 mb-2">
                                     <button type="submit" class="btn btn-primary w-100">Enviar Invitación</button>
                                 </div>
                             </div>
@@ -2104,26 +2155,110 @@ INVITAR_CONTACTOS_TEMPLATE = '''
         </div>
     </div>
 
+    <!-- Modal de resultado -->
+    <div class="modal fade" id="inviteResultModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="inviteResultTitle">Resultado</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="inviteResultBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const inviteMessage = "¡Únete a Golden Coyotes! Una plataforma para conectar oportunidades de negocio con tu red Friends & Family. http://localhost:5002";
+        const inviteLink = "{{ invite_link }}";
+        const inviterName = "{{ inviter_name }}";
+        const inviteMessage = `¡${inviterName} te invita a Golden Coyotes! Una plataforma para conectar oportunidades de negocio con tu red Friends & Family. ${inviteLink}`;
+
+        const inviteResultModal = new bootstrap.Modal(document.getElementById('inviteResultModal'));
+
+        function showInviteResult(title, message, isError = false) {
+            const titleEl = document.getElementById('inviteResultTitle');
+            const bodyEl = document.getElementById('inviteResultBody');
+            titleEl.textContent = title;
+            bodyEl.textContent = message;
+            titleEl.className = isError ? 'modal-title text-danger' : 'modal-title text-success';
+            inviteResultModal.show();
+        }
+
+        async function tryNativeShare() {
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: 'Invitación a Golden Coyotes',
+                        text: inviteMessage,
+                        url: inviteLink
+                    });
+                    return true;
+                } catch (err) {
+                    return false;
+                }
+            }
+            return false;
+        }
 
         function inviteWhatsApp() {
-            window.open(`https://wa.me/?text=${encodeURIComponent(inviteMessage)}`, '_blank');
+            tryNativeShare().then((shared) => {
+                if (!shared) {
+                    window.open(`https://wa.me/?text=${encodeURIComponent(inviteMessage)}`, '_blank');
+                }
+            });
         }
 
         function inviteFacebook() {
-            window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent('http://localhost:5002')}`, '_blank');
+            const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(inviteLink)}`;
+            window.open(facebookUrl, '_blank', 'width=600,height=500');
         }
 
         function inviteLinkedIn() {
-            window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent('http://localhost:5002')}`, '_blank');
+            const linkedInUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(inviteLink)}`;
+            window.open(linkedInUrl, '_blank', 'width=600,height=500');
         }
 
         function inviteInstagram() {
-            alert('Copia este mensaje para compartir en Instagram:\\n\\n' + inviteMessage);
-            navigator.clipboard.writeText(inviteMessage);
+            tryNativeShare().then((shared) => {
+                if (shared) {
+                    return;
+                }
+                const instagramUrl = 'https://www.instagram.com/direct/inbox/';
+                window.open(instagramUrl, '_blank');
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(inviteMessage);
+                }
+                showInviteResult('Mensaje copiado', 'Se copió el mensaje al portapapeles. Pégalo en Instagram Direct.', false);
+            });
         }
+
+        document.getElementById('emailInviteForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const payload = Object.fromEntries(formData);
+
+            try {
+                const response = await fetch('/api/send-invitation-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    this.reset();
+                    showInviteResult('Invitación enviada', 'El correo se envió correctamente.', false);
+                } else {
+                    showInviteResult('Error al enviar', result.error || 'No se pudo enviar el correo.', true);
+                }
+            } catch (error) {
+                showInviteResult('Error al enviar', 'Ocurrió un error de red. Intenta de nuevo.', true);
+            }
+        });
     </script>
 </body>
 </html>

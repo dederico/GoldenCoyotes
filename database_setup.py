@@ -346,7 +346,7 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def create_connection(self, user_id, target_user_id, message=""):
+    def create_connection(self, user_id, target_user_id, message="", status="pending", accepted_at=None):
         """Create connection request between users"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -355,9 +355,9 @@ class DatabaseManager:
             conn_id = str(uuid.uuid4())
             
             cursor.execute('''
-                INSERT INTO connections (id, user_id, connected_user_id, message)
-                VALUES (?, ?, ?, ?)
-            ''', (conn_id, user_id, target_user_id, message))
+                INSERT INTO connections (id, user_id, connected_user_id, status, message, accepted_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (conn_id, user_id, target_user_id, status, message, accepted_at))
             
             conn.commit()
             return conn_id

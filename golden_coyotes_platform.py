@@ -95,6 +95,7 @@ class GoldenCoyotesPlatform:
             """User registration"""
             if request.method == 'POST':
                 data = request.get_json() or request.form.to_dict()
+                ref_code = data.get('ref') or request.args.get('ref')
                 
                 # Validate required fields
                 required_fields = ['email', 'password', 'name', 'industry', 'location']
@@ -118,6 +119,17 @@ class GoldenCoyotesPlatform:
                 )
                 
                 if user_id:
+                    if ref_code and ref_code != user_id:
+                        inviter = self.db.get_user(ref_code)
+                        if inviter:
+                            self.db.create_connection(
+                                ref_code,
+                                user_id,
+                                message="Invitación aceptada automáticamente",
+                                status="accepted",
+                                accepted_at=datetime.now().isoformat()
+                            )
+
                     # Send welcome email
                     self.email_service.send_welcome_email(data['email'], data['name'])
                     
@@ -131,7 +143,8 @@ class GoldenCoyotesPlatform:
                 else:
                     return jsonify({'error': 'Email already exists or registration failed'}), 400
             
-            return render_template_string(REGISTER_TEMPLATE)
+            ref_code = request.args.get('ref', '')
+            return render_template_string(REGISTER_TEMPLATE, ref_code=ref_code)
         
         @self.app.route('/login', methods=['GET', 'POST'])
         def login():
@@ -412,7 +425,8 @@ class GoldenCoyotesPlatform:
                 for email in emails:
                     try:
                         # Create invitation link with referral code
-                        invite_link = f"http://localhost:8080/register?ref={session['user_id']}"
+                        base_url = request.host_url.rstrip('/')
+                        invite_link = f"{base_url}/register?ref={session['user_id']}"
 
                         # Send invitation email
                         success = self.email_service.send_invitation_email(
@@ -843,6 +857,7 @@ REGISTER_TEMPLATE = '''
                     </div>
                     
                     <form id="registerForm">
+                        <input type="hidden" name="ref" value="{{ ref_code }}">
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Full Name *</label>

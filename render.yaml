@@ -7,7 +7,7 @@ services:
     env: python
     plan: free  # or starter for production
     buildCommand: "pip install -r requirements_after_feedback.txt"
-    startCommand: "python main_after_feedback.py"
+    startCommand: "python3 main_after_feedback.py"
     envVars:
       - key: RENDER
         value: "true"

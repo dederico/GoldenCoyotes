@@ -180,7 +180,7 @@ services:
   - type: web
     name: golden-coyotes-after-feedback
     buildCommand: "pip install -r requirements_after_feedback.txt"
-    startCommand: "python main_after_feedback.py"
+    startCommand: "python3 main_after_feedback.py"
     plan: free  # o starter
 ```
 
