@@ -40,33 +40,62 @@ class EmailService:
     def send_email(self, to_email, subject, html_content, text_content=None):
         """Send email with HTML content"""
         try:
+            logger.info(f"Attempting to send email to {to_email}")
+            logger.debug(f"SMTP Config: server={self.smtp_server}, port={self.smtp_port}, from={self.email_address}")
+
             # Create message
             message = MIMEMultipart("alternative")
             message["Subject"] = subject
             message["From"] = f"{self.sender_name} <{self.email_address}>"
             message["To"] = to_email
-            
+
             # Add text version if provided
             if text_content:
                 text_part = MIMEText(text_content, "plain")
                 message.attach(text_part)
-            
+
             # Add HTML version
             html_part = MIMEText(html_content, "html")
             message.attach(html_part)
-            
+
             # Create secure connection and send email
             context = ssl.create_default_context()
+            logger.debug(f"Connecting to SMTP server {self.smtp_server}:{self.smtp_port}")
+
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                logger.debug("Starting TLS connection...")
                 server.starttls(context=context)
+
+                logger.debug(f"Logging in with email: {self.email_address}")
                 server.login(self.email_address, self.email_password)
+
+                logger.debug("Sending email...")
                 server.sendmail(self.email_address, to_email, message.as_string())
-            
-            logger.info(f"Email sent successfully to {to_email}")
+
+            logger.info(f"✅ Email sent successfully to {to_email}")
             return True
-            
+
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"❌ SMTP Authentication Error to {to_email}: {type(e).__name__}")
+            logger.error(f"   Error code: {e.smtp_code}, Message: {e.smtp_error}")
+            logger.error(f"   Email: {self.email_address}")
+            logger.error(f"   SMTP Server: {self.smtp_server}:{self.smtp_port}")
+            logger.error("   ⚠️  Verify EMAIL_ADDRESS and EMAIL_PASSWORD environment variables")
+            return False
+        except smtplib.SMTPConnectError as e:
+            logger.error(f"❌ SMTP Connection Error to {to_email}: Cannot connect to {self.smtp_server}:{self.smtp_port}")
+            logger.error(f"   Error: {e}")
+            logger.error("   ⚠️  Check SMTP_SERVER and SMTP_PORT settings")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"❌ SMTP Error sending to {to_email}: {type(e).__name__}")
+            logger.error(f"   Details: {str(e)}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {e}")
+            logger.error(f"❌ Unexpected error sending email to {to_email}: {type(e).__name__}")
+            logger.error(f"   Details: {str(e)}")
+            import traceback
+            logger.error(f"   Traceback:\n{traceback.format_exc()}")
             return False
     
     def send_welcome_email(self, user_email, user_name):

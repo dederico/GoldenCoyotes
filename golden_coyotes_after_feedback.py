@@ -289,17 +289,43 @@ class GoldenCoyotesAfterFeedback:
         @self.require_login
         def send_invitation_email():
             """Enviar invitación por correo"""
+            import logging
+            logger = logging.getLogger(__name__)
+
             data = request.get_json() or request.form.to_dict()
             recipient_email = (data.get('email') or '').strip()
             personal_message = (data.get('message') or '').strip()
 
+            logger.info(f"📧 Attempting to send invitation email to: {recipient_email}")
+
             if not recipient_email:
+                logger.warning(f"❌ Email invitation failed: No email provided")
                 return jsonify({'success': False, 'error': 'Email requerido'}), 400
 
             inviter = self.db.get_user(session['user_id'])
             inviter_name = inviter['name'] if inviter else session.get('user_name', 'Golden Coyotes')
             inviter_company = inviter.get('company', '') if inviter else ''
             invite_link = f"{request.host_url.rstrip('/')}/register?ref={session['user_id']}"
+
+            logger.info(f"📤 Sending invitation from {inviter_name} to {recipient_email}")
+
+            # Verificar configuración SMTP antes de enviar
+            smtp_config = {
+                'server': self.email_service.smtp_server,
+                'port': self.email_service.smtp_port,
+                'email': self.email_service.email_address,
+                'password_set': bool(self.email_service.email_password and self.email_service.email_password != 'your-app-password')
+            }
+            logger.debug(f"SMTP Configuration: {smtp_config}")
+
+            if not smtp_config['password_set']:
+                error_msg = 'Las credenciales SMTP no están configuradas. Por favor configura EMAIL_ADDRESS y EMAIL_PASSWORD en variables de entorno.'
+                logger.error(f"❌ {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'error': error_msg,
+                    'details': 'Revisa las variables de entorno: EMAIL_ADDRESS, EMAIL_PASSWORD, SMTP_SERVER, SMTP_PORT'
+                }), 500
 
             success = self.email_service.send_invitation_email(
                 recipient_email=recipient_email,
@@ -310,11 +336,15 @@ class GoldenCoyotesAfterFeedback:
             )
 
             if success:
-                return jsonify({'success': True})
+                logger.info(f"✅ Invitation email sent successfully to {recipient_email}")
+                return jsonify({'success': True, 'message': f'Invitación enviada a {recipient_email}'})
 
+            error_msg = 'No se pudo enviar el correo. Error de autenticación SMTP o conexión. Revisa los logs del servidor para más detalles.'
+            logger.error(f"❌ Failed to send invitation email to {recipient_email}")
             return jsonify({
                 'success': False,
-                'error': 'No se pudo enviar el correo. Verifica credenciales SMTP.'
+                'error': error_msg,
+                'details': 'Revisa los logs del servidor para detalles específicos del error SMTP'
             }), 500
         @self.app.route('/api/mark-interest', methods=['POST'])
         @self.require_login
@@ -2136,7 +2166,7 @@ INVITAR_CONTACTOS_TEMPLATE = '''
                 <div class="card">
                     <div class="card-body">
                         <h5><i class="fas fa-envelope"></i> Invitación Manual</h5>
-                        <form id="emailInviteForm">
+                        <form id="emailInviteForm" onsubmit="sendInviteEmail(event)">
                             <div class="row">
                                 <div class="col-md-8 mb-2">
                                     <input type="email" class="form-control" name="email" placeholder="email@ejemplo.com" required>
@@ -2183,7 +2213,8 @@ INVITAR_CONTACTOS_TEMPLATE = '''
             const titleEl = document.getElementById('inviteResultTitle');
             const bodyEl = document.getElementById('inviteResultBody');
             titleEl.textContent = title;
-            bodyEl.textContent = message;
+            // Convertir saltos de línea a <br> para mejor visualización
+            bodyEl.innerHTML = message.replace(/\n/g, '<br>');
             titleEl.className = isError ? 'modal-title text-danger' : 'modal-title text-success';
             inviteResultModal.show();
         }
@@ -2218,8 +2249,38 @@ INVITAR_CONTACTOS_TEMPLATE = '''
         }
 
         function inviteLinkedIn() {
-            const linkedInUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(inviteLink)}`;
-            window.open(linkedInUrl, '_blank', 'width=600,height=500');
+            // Intentar usar Web Share API primero (funciona mejor en móviles)
+            tryNativeShare().then((shared) => {
+                if (shared) {
+                    return;
+                }
+                // Si no funciona, abrir mensajes de LinkedIn y copiar el mensaje
+                const linkedInMessagesUrl = 'https://www.linkedin.com/messaging/';
+                window.open(linkedInMessagesUrl, '_blank');
+
+                // Copiar mensaje al portapapeles
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(inviteMessage).then(() => {
+                        showInviteResult(
+                            '💼 LinkedIn - Mensaje copiado',
+                            'Se abrió LinkedIn Mensajes y se copió el mensaje al portapapeles.\n\nPega el mensaje en un chat con tus amigos para invitarlos.',
+                            false
+                        );
+                    }).catch(() => {
+                        showInviteResult(
+                            '💼 LinkedIn abierto',
+                            'Se abrió LinkedIn Mensajes.\n\nCopia y pega este mensaje:\n\n' + inviteMessage,
+                            false
+                        );
+                    });
+                } else {
+                    showInviteResult(
+                        '💼 LinkedIn abierto',
+                        'Se abrió LinkedIn Mensajes.\n\nCopia y pega este mensaje:\n\n' + inviteMessage,
+                        false
+                    );
+                }
+            });
         }
 
         function inviteInstagram() {
@@ -2236,12 +2297,24 @@ INVITAR_CONTACTOS_TEMPLATE = '''
             });
         }
 
-        document.getElementById('emailInviteForm').addEventListener('submit', async function (e) {
+        async function sendInviteEmail(e) {
             e.preventDefault();
-            const formData = new FormData(this);
+            const form = document.getElementById('emailInviteForm');
+            if (!form) {
+                alert('Formulario no encontrado.');
+                return false;
+            }
+            const formData = new FormData(form);
             const payload = Object.fromEntries(formData);
 
+            // Mostrar indicador de carga
+            const submitBtn = form.querySelector('button[type="submit"]');
+            const originalBtnText = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+
             try {
+                console.log('📧 Sending invitation email to:', payload.email);
                 const response = await fetch('/api/send-invitation-email', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2249,16 +2322,30 @@ INVITAR_CONTACTOS_TEMPLATE = '''
                 });
                 const result = await response.json();
 
+                console.log('Server response:', result);
+
                 if (result.success) {
-                    this.reset();
-                    showInviteResult('Invitación enviada', 'El correo se envió correctamente.', false);
+                    form.reset();
+                    const message = result.message || 'El correo se envió correctamente.';
+                    showInviteResult('✅ Invitación enviada', message, false);
                 } else {
-                    showInviteResult('Error al enviar', result.error || 'No se pudo enviar el correo.', true);
+                    let errorMessage = result.error || 'No se pudo enviar el correo.';
+                    if (result.details) {
+                        errorMessage += '\n\n' + result.details;
+                    }
+                    console.error('❌ Email error:', errorMessage);
+                    showInviteResult('❌ Error al enviar', errorMessage, true);
                 }
             } catch (error) {
-                showInviteResult('Error al enviar', 'Ocurrió un error de red. Intenta de nuevo.', true);
+                console.error('❌ Network error:', error);
+                showInviteResult('❌ Error al enviar', 'Ocurrió un error de red. Intenta de nuevo.\n\nRevisa la consola del navegador y los logs del servidor para más detalles.', true);
+            } finally {
+                // Restaurar botón
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
             }
-        });
+            return false;
+        }
     </script>
 </body>
 </html>
