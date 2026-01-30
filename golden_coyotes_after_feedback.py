@@ -2249,34 +2249,34 @@ INVITAR_CONTACTOS_TEMPLATE = '''
         }
 
         function inviteLinkedIn() {
-            // Intentar usar Web Share API primero (funciona mejor en móviles)
-            tryNativeShare().then((shared) => {
+            // Intentar usar Web Share API primero (funciona mejor en moviles)
+            tryNativeShare().then(function(shared) {
                 if (shared) {
                     return;
                 }
                 // Si no funciona, abrir mensajes de LinkedIn y copiar el mensaje
-                const linkedInMessagesUrl = 'https://www.linkedin.com/messaging/';
+                var linkedInMessagesUrl = 'https://www.linkedin.com/messaging/';
                 window.open(linkedInMessagesUrl, '_blank');
 
                 // Copiar mensaje al portapapeles
                 if (navigator.clipboard) {
-                    navigator.clipboard.writeText(inviteMessage).then(() => {
+                    navigator.clipboard.writeText(inviteMessage).then(function() {
                         showInviteResult(
-                            '💼 LinkedIn - Mensaje copiado',
-                            'Se abrió LinkedIn Mensajes y se copió el mensaje al portapapeles.\n\nPega el mensaje en un chat con tus amigos para invitarlos.',
+                            'LinkedIn - Mensaje copiado',
+                            'Se abrio LinkedIn Mensajes y se copio el mensaje al portapapeles.\\n\\nPega el mensaje en un chat con tus amigos para invitarlos.',
                             false
                         );
-                    }).catch(() => {
+                    }).catch(function() {
                         showInviteResult(
-                            '💼 LinkedIn abierto',
-                            'Se abrió LinkedIn Mensajes.\n\nCopia y pega este mensaje:\n\n' + inviteMessage,
+                            'LinkedIn abierto',
+                            'Se abrio LinkedIn Mensajes.\\n\\nCopia y pega este mensaje:\\n\\n' + inviteMessage,
                             false
                         );
                     });
                 } else {
                     showInviteResult(
-                        '💼 LinkedIn abierto',
-                        'Se abrió LinkedIn Mensajes.\n\nCopia y pega este mensaje:\n\n' + inviteMessage,
+                        'LinkedIn abierto',
+                        'Se abrio LinkedIn Mensajes.\\n\\nCopia y pega este mensaje:\\n\\n' + inviteMessage,
                         false
                     );
                 }
