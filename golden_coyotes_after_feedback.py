@@ -2203,18 +2203,19 @@ INVITAR_CONTACTOS_TEMPLATE = '''
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const inviteLink = "{{ invite_link }}";
-        const inviterName = "{{ inviter_name }}";
-        const inviteMessage = `¡${inviterName} te invita a Golden Coyotes! Una plataforma para conectar oportunidades de negocio con tu red Friends & Family. ${inviteLink}`;
+        var inviteLink = "{{ invite_link }}";
+        var inviterName = "{{ inviter_name }}";
+        var inviteMessage = inviterName + ' te invita a Golden Coyotes! Una plataforma para conectar oportunidades de negocio con tu red Friends & Family. ' + inviteLink;
 
-        const inviteResultModal = new bootstrap.Modal(document.getElementById('inviteResultModal'));
+        var inviteResultModal = new bootstrap.Modal(document.getElementById('inviteResultModal'));
 
-        function showInviteResult(title, message, isError = false) {
-            const titleEl = document.getElementById('inviteResultTitle');
-            const bodyEl = document.getElementById('inviteResultBody');
+        function showInviteResult(title, message, isError) {
+            isError = isError || false;
+            var titleEl = document.getElementById('inviteResultTitle');
+            var bodyEl = document.getElementById('inviteResultBody');
             titleEl.textContent = title;
-            // Convertir saltos de línea a <br> para mejor visualización
-            bodyEl.innerHTML = message.replace(/\n/g, '<br>');
+            // Convertir saltos de linea a <br> para mejor visualizacion
+            bodyEl.innerHTML = message.replace(/\\n/g, '<br>');
             titleEl.className = isError ? 'modal-title text-danger' : 'modal-title text-success';
             inviteResultModal.show();
         }
@@ -2236,15 +2237,15 @@ INVITAR_CONTACTOS_TEMPLATE = '''
         }
 
         function inviteWhatsApp() {
-            tryNativeShare().then((shared) => {
+            tryNativeShare().then(function(shared) {
                 if (!shared) {
-                    window.open(`https://wa.me/?text=${encodeURIComponent(inviteMessage)}`, '_blank');
+                    window.open('https://wa.me/?text=' + encodeURIComponent(inviteMessage), '_blank');
                 }
             });
         }
 
         function inviteFacebook() {
-            const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(inviteLink)}`;
+            var facebookUrl = 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(inviteLink);
             window.open(facebookUrl, '_blank', 'width=600,height=500');
         }
 
@@ -2284,66 +2285,68 @@ INVITAR_CONTACTOS_TEMPLATE = '''
         }
 
         function inviteInstagram() {
-            tryNativeShare().then((shared) => {
+            tryNativeShare().then(function(shared) {
                 if (shared) {
                     return;
                 }
-                const instagramUrl = 'https://www.instagram.com/direct/inbox/';
+                var instagramUrl = 'https://www.instagram.com/direct/inbox/';
                 window.open(instagramUrl, '_blank');
                 if (navigator.clipboard) {
                     navigator.clipboard.writeText(inviteMessage);
                 }
-                showInviteResult('Mensaje copiado', 'Se copió el mensaje al portapapeles. Pégalo en Instagram Direct.', false);
+                showInviteResult('Mensaje copiado', 'Se copio el mensaje al portapapeles. Pegalo en Instagram Direct.', false);
             });
         }
 
-        async function sendInviteEmail(e) {
+        function sendInviteEmail(e) {
             e.preventDefault();
-            const form = document.getElementById('emailInviteForm');
+            var form = document.getElementById('emailInviteForm');
             if (!form) {
                 alert('Formulario no encontrado.');
                 return false;
             }
-            const formData = new FormData(form);
-            const payload = Object.fromEntries(formData);
+            var formData = new FormData(form);
+            var payload = Object.fromEntries(formData);
 
             // Mostrar indicador de carga
-            const submitBtn = form.querySelector('button[type="submit"]');
-            const originalBtnText = submitBtn.innerHTML;
+            var submitBtn = form.querySelector('button[type="submit"]');
+            var originalBtnText = submitBtn.innerHTML;
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
 
-            try {
-                console.log('📧 Sending invitation email to:', payload.email);
-                const response = await fetch('/api/send-invitation-email', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await response.json();
-
+            fetch('/api/send-invitation-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(result) {
                 console.log('Server response:', result);
 
                 if (result.success) {
                     form.reset();
-                    const message = result.message || 'El correo se envió correctamente.';
-                    showInviteResult('✅ Invitación enviada', message, false);
+                    var message = result.message || 'El correo se envio correctamente.';
+                    showInviteResult('Invitacion enviada', message, false);
                 } else {
-                    let errorMessage = result.error || 'No se pudo enviar el correo.';
+                    var errorMessage = result.error || 'No se pudo enviar el correo.';
                     if (result.details) {
-                        errorMessage += '\n\n' + result.details;
+                        errorMessage += '\\n\\n' + result.details;
                     }
-                    console.error('❌ Email error:', errorMessage);
-                    showInviteResult('❌ Error al enviar', errorMessage, true);
+                    console.error('Email error:', errorMessage);
+                    showInviteResult('Error al enviar', errorMessage, true);
                 }
-            } catch (error) {
-                console.error('❌ Network error:', error);
-                showInviteResult('❌ Error al enviar', 'Ocurrió un error de red. Intenta de nuevo.\n\nRevisa la consola del navegador y los logs del servidor para más detalles.', true);
-            } finally {
-                // Restaurar botón
+            })
+            .catch(function(error) {
+                console.error('Network error:', error);
+                showInviteResult('Error al enviar', 'Ocurrio un error de red. Intenta de nuevo.\\n\\nRevisa la consola del navegador y los logs del servidor para mas detalles.', true);
+            })
+            .finally(function() {
+                // Restaurar boton
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = originalBtnText;
-            }
+            });
             return false;
         }
     </script>
