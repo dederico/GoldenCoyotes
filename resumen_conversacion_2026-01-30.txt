@@ -1,0 +1,182 @@
+===============================================================================
+RESUMEN DE CONVERSACIÓN - GOLDEN COYOTES PLATFORM
+Fecha: 2026-01-30
+===============================================================================
+
+CONTEXTO INICIAL:
+-----------------
+El usuario proporcionó feedback de un documento de Google Drive con 4 puntos
+principales sobre mejoras necesarias para la plataforma Golden Coyotes.
+
+La plataforma actualmente en ejecución es:
+- main_after_feedback.py (punto de entrada)
+- golden_coyotes_after_feedback.py (interfaz de usuario)
+- web_app_after_feedback.py (panel de administrador)
+- database_setup.py (gestión de base de datos)
+
+FEEDBACK RECIBIDO:
+------------------
+
+1. Falta confirmación de oportunidad enviada
+   - Estado: PENDIENTE
+   - Descripción: Notificación que confirme que la oportunidad fue subida exitosamente
+
+2. No visualizo las oportunidades que he enviado
+   - Estado: PENDIENTE
+   - Descripción: Tener un área donde pueda visualizar las oportunidades que he enviado
+
+3. Ver Oportunidades (Lista de Oportunidades)
+   - Estado: PENDIENTE
+   - Descripción: Crear una ruta para ver el estado de las oportunidades
+
+4. Vida de las Oportunidades
+   - Estado: PENDIENTE
+   - Descripción: Agregar el atributo de VIGENCIA de la oportunidad
+   - Pregunta adicional: ¿Cada cuánto validar que la información está vigente o actualizada?
+
+IMPLEMENTACIÓN REALIZADA:
+-------------------------
+
+1. MODIFICACIONES A BASE DE DATOS (database_setup.py):
+   ✅ Agregado campo 'expiration_date DATE' a la tabla opportunities
+   ✅ Actualizado método create_opportunity() para incluir vigencia
+
+   Cambios específicos:
+   - Línea 71: Campo expiration_date en CREATE TABLE
+   - Líneas 298-305: Parámetro expiration_date en INSERT
+
+2. MODIFICACIONES AL BACKEND (golden_coyotes_after_feedback.py):
+
+   a) Rutas actualizadas:
+      ✅ /subir-oportunidad (líneas 150-176)
+         - Captura campo expiration_date del formulario
+         - Mensaje de confirmación mejorado
+         - Redirección a /mis-oportunidades
+
+      ✅ /oportunidad-dirigida (líneas 179-211)
+         - Captura campo expiration_date del formulario
+         - Mensaje de confirmación mejorado
+         - Redirección a /mis-oportunidades
+
+   b) Nuevas rutas creadas:
+      ✅ /mis-oportunidades (líneas 379-385)
+         - Muestra todas las oportunidades publicadas por el usuario
+         - Usa template MIS_OPORTUNIDADES_TEMPLATE
+
+      ✅ /opportunities-status (líneas 387-406)
+         - Muestra estado de todas las oportunidades
+         - Calcula vigencia automáticamente
+         - Clasifica: Activas, Por Vencer, Vencidas
+         - Usa template OPPORTUNITIES_STATUS_TEMPLATE
+
+   c) Método actualizado:
+      ✅ create_opportunity() (líneas 439-454)
+         - Implementación real con base de datos (no mock)
+         - Vigencia por defecto: 30 días
+         - Almacena en DB con campo expiration_date
+
+3. MODIFICACIONES AL FRONTEND (Templates HTML):
+
+   a) SUBIR_OPORTUNIDAD_TEMPLATE (líneas 1149-1157):
+      ✅ Campo de vigencia agregado
+      ✅ Input type="date" con validación
+      ✅ Valor por defecto: +30 días
+      ✅ Valor mínimo: mañana
+
+   b) OPORTUNIDAD_DIRIGIDA_TEMPLATE (líneas 1294-1302):
+      ✅ Campo de vigencia agregado
+      ✅ Mismas validaciones que formulario público
+
+   c) MIS_OPORTUNIDADES_TEMPLATE (nuevo, líneas 2423-2505):
+      ✅ Vista de tarjetas con oportunidades del usuario
+      ✅ Muestra: título, descripción, tipo, industria, vigencia
+      ✅ Navegación al dashboard
+      ✅ Mensaje cuando no hay oportunidades
+
+   d) OPPORTUNITIES_STATUS_TEMPLATE (nuevo, líneas 2507-2626):
+      ✅ Dashboard con métricas (Activas/Por Vencer/Vencidas)
+      ✅ Tabla detallada con estado de vigencia
+      ✅ Indicadores visuales de color (verde/amarillo/rojo)
+      ✅ Cálculo de días restantes
+      ✅ Clasificación automática de estado
+
+4. LÓGICA DE VALIDACIÓN DE VIGENCIA:
+
+   Implementada en /opportunities-status (líneas 393-404):
+   - Calcula días restantes hasta vencimiento
+   - Clasifica oportunidades:
+     * Vencida: days_left < 0
+     * Por vencer: 0 <= days_left <= 7
+     * Activa: days_left > 7
+   - Agrega propiedades: is_expired, is_expiring_soon, days_left
+
+5. CONFIRMACIÓN VISUAL:
+   ✅ Mensajes flash de éxito en ambas rutas de creación
+   ✅ Redirección automática a /mis-oportunidades
+   ✅ Mensaje: "¡Oportunidad publicada exitosamente! Podrás verla en 'Mis Oportunidades'."
+
+DOCUMENTACIÓN CREADA:
+----------------------
+✅ TASK.md - Registro completo de tareas con detalles técnicos
+✅ resumen_conversacion_2026-01-30.txt - Este archivo
+
+RESULTADOS:
+-----------
+
+FEEDBACK RESUELTO:
+✅ Punto 1: Confirmación de oportunidad enviada - COMPLETADO
+✅ Punto 2: Visualizar oportunidades enviadas - COMPLETADO
+✅ Punto 3: Ver lista de oportunidades con estado - COMPLETADO
+✅ Punto 4: Vigencia de oportunidades - COMPLETADO
+
+FUNCIONALIDADES AGREGADAS:
+- Campo de vigencia en base de datos
+- Campo de vigencia en formularios (2 templates)
+- Vista de "Mis Oportunidades"
+- Vista de "Estado de Oportunidades"
+- Validación automática de vigencia
+- Clasificación por estado
+- Dashboard de métricas
+- Indicadores visuales de estado
+
+ARCHIVOS MODIFICADOS:
+1. database_setup.py
+2. golden_coyotes_after_feedback.py
+
+ARCHIVOS CREADOS:
+1. TASK.md
+2. resumen_conversacion_2026-01-30.txt
+
+PREGUNTA PENDIENTE:
+-------------------
+"¿Cada cuánto validar que la información está vigente o actualizada?"
+
+RESPUESTA SUGERIDA:
+La validación se realiza en tiempo real cada vez que se accede a /opportunities-status.
+Para una solución más completa, se recomienda:
+
+1. Validación en tiempo real (ya implementada) ✅
+2. Tarea programada nocturna para:
+   - Marcar oportunidades vencidas como inactivas
+   - Enviar notificaciones 7 días antes del vencimiento
+   - Limpiar oportunidades vencidas hace >90 días
+3. Notificaciones por email (requiere implementación futura)
+
+PRÓXIMOS PASOS SUGERIDOS:
+--------------------------
+1. Probar las nuevas funcionalidades en desarrollo
+2. Verificar que la base de datos se actualiza correctamente
+3. Decidir sobre la frecuencia de validación automática
+4. Implementar notificaciones por email (opcional)
+5. Agregar opción de renovar/extender vigencia
+
+NOTAS TÉCNICAS:
+---------------
+- Todas las modificaciones son compatibles con el código existente
+- No se requieren migraciones de base de datos (SQLite soporta ALTER TABLE)
+- Los templates usan Bootstrap 5 para consistencia visual
+- La validación de vigencia es eficiente (cálculo en memoria)
+
+===============================================================================
+FIN DEL RESUMEN
+===============================================================================

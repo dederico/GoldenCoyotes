@@ -153,25 +153,26 @@ class GoldenCoyotesAfterFeedback:
             """Cuadrante 1: Subir oportunidad pública"""
             if request.method == 'POST':
                 data = request.form.to_dict()
-                
+
                 opportunity_data = {
                     'user_id': session['user_id'],
                     'title': data.get('title'),
                     'description': data.get('description'),
                     'industry': data.get('industry'),
                     'type': data.get('type'),  # producto o servicio
+                    'expiration_date': data.get('expiration_date'),
                     'is_public': True,  # Siempre pública en cuadrante 1
                     'media_files': data.get('media_files', []),
                     'created_at': datetime.now().isoformat()
                 }
-                
+
                 try:
                     opp_id = self.create_opportunity(opportunity_data)
-                    flash('¡Oportunidad publicada exitosamente!', 'success')
-                    return redirect(url_for('dashboard'))
+                    flash('¡Oportunidad publicada exitosamente! Podrás verla en "Mis Oportunidades".', 'success')
+                    return redirect(url_for('mis_oportunidades'))
                 except Exception as e:
                     flash(f'Error al crear oportunidad: {e}', 'error')
-            
+
             return render_template_string(SUBIR_OPORTUNIDAD_TEMPLATE)
         
         # ==================== CUADRANTE 2: OPORTUNIDAD DIRIGIDA ====================
@@ -181,31 +182,32 @@ class GoldenCoyotesAfterFeedback:
             """Cuadrante 2: Enviar oportunidad a contactos específicos"""
             user_id = session['user_id']
             my_contacts = self.get_user_contacts(user_id)
-            
+
             if request.method == 'POST':
                 data = request.form.to_dict()
-                
+
                 opportunity_data = {
                     'user_id': user_id,
                     'title': data.get('title'),
                     'description': data.get('description'),
                     'industry': data.get('industry'),
                     'type': data.get('type'),
+                    'expiration_date': data.get('expiration_date'),
                     'is_public': False,  # Privada/dirigida
                     'directed_to': data.get('selected_contacts', []),
                     'media_files': data.get('media_files', []),
                     'created_at': datetime.now().isoformat()
                 }
-                
+
                 try:
                     opp_id = self.create_opportunity(opportunity_data)
                     # Notificar a los contactos seleccionados
                     self.notify_directed_opportunity(opp_id, opportunity_data['directed_to'])
-                    flash('¡Oportunidad enviada a tus contactos!', 'success')
-                    return redirect(url_for('dashboard'))
+                    flash('¡Oportunidad enviada exitosamente a tus contactos! Podrás verla en "Mis Oportunidades".', 'success')
+                    return redirect(url_for('mis_oportunidades'))
                 except Exception as e:
                     flash(f'Error al enviar oportunidad: {e}', 'error')
-            
+
             return render_template_string(OPORTUNIDAD_DIRIGIDA_TEMPLATE, contacts=my_contacts)
         
         # ==================== CUADRANTE 3: BUSCO OPORTUNIDAD GENERAL ====================
@@ -375,6 +377,36 @@ class GoldenCoyotesAfterFeedback:
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
         
+        # ==================== NUEVAS RUTAS FEEDBACK ====================
+        @self.app.route('/mis-oportunidades')
+        @self.require_login
+        def mis_oportunidades():
+            """Ver todas las oportunidades que he publicado"""
+            user_id = session['user_id']
+            user_opportunities = self.db.get_opportunities(user_id=user_id)
+            return render_template_string(MIS_OPORTUNIDADES_TEMPLATE, opportunities=user_opportunities)
+
+        @self.app.route('/opportunities-status')
+        @self.require_login
+        def opportunities_status():
+            """Ver estado de todas las oportunidades con vigencia"""
+            all_opportunities = self.db.get_opportunities(limit=100)
+
+            # Calcular estado de vigencia para cada oportunidad
+            for opp in all_opportunities:
+                if opp.get('expiration_date'):
+                    exp_date = datetime.strptime(opp['expiration_date'], '%Y-%m-%d')
+                    days_left = (exp_date - datetime.now()).days
+                    opp['days_left'] = days_left
+                    opp['is_expired'] = days_left < 0
+                    opp['is_expiring_soon'] = 0 <= days_left <= 7
+                else:
+                    opp['days_left'] = None
+                    opp['is_expired'] = False
+                    opp['is_expiring_soon'] = False
+
+            return render_template_string(OPPORTUNITIES_STATUS_TEMPLATE, opportunities=all_opportunities)
+
         @self.app.route('/logout')
         @self.require_login
         def logout():
@@ -438,8 +470,20 @@ class GoldenCoyotesAfterFeedback:
     
     def create_opportunity(self, opportunity_data):
         """Crear nueva oportunidad"""
-        # Mock implementation
-        return str(uuid.uuid4())
+        expiration_date = opportunity_data.get('expiration_date')
+        if not expiration_date:
+            expiration_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+
+        opp_id = self.db.create_opportunity(
+            user_id=opportunity_data.get('user_id'),
+            title=opportunity_data.get('title'),
+            description=opportunity_data.get('description'),
+            opp_type=opportunity_data.get('type'),
+            industry=opportunity_data.get('industry'),
+            expiration_date=expiration_date,
+            tags=','.join(opportunity_data.get('directed_to', [])) if 'directed_to' in opportunity_data else None
+        )
+        return opp_id
     
     def create_company_access(self, company_data):
         """Registrar acceso a empresa"""
@@ -1105,8 +1149,18 @@ SUBIR_OPORTUNIDAD_TEMPLATE = '''
                             </div>
 
                             <div class="mb-3">
+                                <label class="form-label">Vigencia de la Oportunidad *</label>
+                                <input type="date" class="form-control" name="expiration_date" required
+                                       min="{{ (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
+                                       value="{{ (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d') }}">
+                                <small class="text-muted">
+                                    Fecha hasta la cual esta oportunidad estará vigente. Por defecto: 30 días.
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
                                 <label class="form-label">Fotos o Videos (opcional)</label>
-                                <input type="file" class="form-control" name="media_files" multiple 
+                                <input type="file" class="form-control" name="media_files" multiple
                                        accept="image/*,video/*">
                                 <small class="text-muted">
                                     Puedes subir imágenes o videos que ayuden a explicar tu oportunidad
@@ -1235,6 +1289,16 @@ OPORTUNIDAD_DIRIGIDA_TEMPLATE = '''
                                 <label class="form-label">Descripción *</label>
                                 <textarea class="form-control" name="description" rows="4" required
                                           placeholder="Describe la oportunidad específica para tus contactos seleccionados..."></textarea>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Vigencia de la Oportunidad *</label>
+                                <input type="date" class="form-control" name="expiration_date" required
+                                       min="{{ (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
+                                       value="{{ (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d') }}">
+                                <small class="text-muted">
+                                    Fecha hasta la cual esta oportunidad estará vigente. Por defecto: 30 días.
+                                </small>
                             </div>
 
                             <!-- Selector de Contactos -->
@@ -2350,6 +2414,213 @@ INVITAR_CONTACTOS_TEMPLATE = '''
             return false;
         }
     </script>
+</body>
+</html>
+'''
+
+# ==================== TEMPLATES FEEDBACK ====================
+
+MIS_OPORTUNIDADES_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Oportunidades - Golden Coyotes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-info">
+        <div class="container">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-light">
+                <i class="fas fa-arrow-left"></i> Volver al Dashboard
+            </a>
+            <span class="navbar-brand">Mis Oportunidades Publicadas</span>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="card shadow">
+            <div class="card-header bg-info text-white">
+                <h4 class="mb-0"><i class="fas fa-list"></i> Oportunidades que He Publicado</h4>
+                <p class="mb-0 mt-2 opacity-75">Todas las oportunidades que has creado</p>
+            </div>
+            <div class="card-body">
+                {% if opportunities %}
+                    <div class="row">
+                        {% for opp in opportunities %}
+                            <div class="col-md-6 mb-3">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <h5 class="card-title">{{ opp.title }}</h5>
+                                        <p class="card-text">{{ opp.description[:150] }}...</p>
+                                        <div class="mb-2">
+                                            <span class="badge bg-primary">{{ opp.type }}</span>
+                                            <span class="badge bg-secondary">{{ opp.industry }}</span>
+                                        </div>
+                                        {% if opp.expiration_date %}
+                                            <p class="text-muted small">
+                                                <i class="fas fa-calendar"></i>
+                                                Vigencia: {{ opp.expiration_date }}
+                                            </p>
+                                        {% endif %}
+                                        <p class="text-muted small">
+                                            <i class="fas fa-clock"></i>
+                                            Publicada: {{ opp.created_at }}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="alert alert-info text-center">
+                        <i class="fas fa-info-circle fa-3x mb-3"></i>
+                        <h5>No has publicado oportunidades aún</h5>
+                        <p>Comienza publicando tu primera oportunidad</p>
+                        <a href="{{ url_for('subir_oportunidad') }}" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Crear Oportunidad
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+'''
+
+OPPORTUNITIES_STATUS_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estado de Oportunidades - Golden Coyotes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .status-expired { border-left: 4px solid #dc3545; }
+        .status-expiring { border-left: 4px solid #ffc107; }
+        .status-active { border-left: 4px solid #28a745; }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-warning">
+        <div class="container">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-dark">
+                <i class="fas fa-arrow-left"></i> Volver al Dashboard
+            </a>
+            <span class="navbar-brand text-dark">Estado de Oportunidades</span>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <div class="card shadow">
+            <div class="card-header bg-warning">
+                <h4 class="mb-0"><i class="fas fa-chart-line"></i> Estado de Todas las Oportunidades</h4>
+                <p class="mb-0 mt-2 opacity-75">Monitoreo de vigencia de oportunidades en la plataforma</p>
+            </div>
+            <div class="card-body">
+                {% if opportunities %}
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h3>{{ opportunities|selectattr('is_expired', 'equalto', False)|selectattr('is_expiring_soon', 'equalto', False)|list|length }}</h3>
+                                    <p class="mb-0">Activas</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-warning text-dark">
+                                <div class="card-body text-center">
+                                    <h3>{{ opportunities|selectattr('is_expiring_soon', 'equalto', True)|list|length }}</h3>
+                                    <p class="mb-0">Por Vencer</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-danger text-white">
+                                <div class="card-body text-center">
+                                    <h3>{{ opportunities|selectattr('is_expired', 'equalto', True)|list|length }}</h3>
+                                    <p class="mb-0">Vencidas</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Título</th>
+                                    <th>Creador</th>
+                                    <th>Tipo</th>
+                                    <th>Vigencia</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for opp in opportunities %}
+                                    <tr class="{% if opp.is_expired %}status-expired{% elif opp.is_expiring_soon %}status-expiring{% else %}status-active{% endif %}">
+                                        <td>{{ opp.title }}</td>
+                                        <td>{{ opp.creator_name }}</td>
+                                        <td><span class="badge bg-primary">{{ opp.type }}</span></td>
+                                        <td>
+                                            {% if opp.expiration_date %}
+                                                {{ opp.expiration_date }}
+                                            {% else %}
+                                                <span class="text-muted">Sin especificar</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if opp.is_expired %}
+                                                <span class="badge bg-danger">
+                                                    <i class="fas fa-times-circle"></i> Vencida
+                                                </span>
+                                            {% elif opp.is_expiring_soon %}
+                                                <span class="badge bg-warning text-dark">
+                                                    <i class="fas fa-exclamation-triangle"></i>
+                                                    Vence en {{ opp.days_left }} día{{ 's' if opp.days_left != 1 else '' }}
+                                                </span>
+                                            {% else %}
+                                                <span class="badge bg-success">
+                                                    <i class="fas fa-check-circle"></i>
+                                                    Activa ({{ opp.days_left }} días)
+                                                </span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="alert alert-info text-center">
+                        <i class="fas fa-info-circle fa-3x mb-3"></i>
+                        <h5>No hay oportunidades en la plataforma</h5>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
 '''

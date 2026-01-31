@@ -68,6 +68,7 @@ class DatabaseManager:
                     budget_max INTEGER,
                     location TEXT,
                     deadline DATE,
+                    expiration_date DATE,
                     requirements TEXT,
                     tags TEXT,
                     is_active INTEGER DEFAULT 1,
@@ -290,22 +291,22 @@ class DatabaseManager:
         """Create new opportunity"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         try:
             opp_id = str(uuid.uuid4())
-            
+
             cursor.execute('''
-                INSERT INTO opportunities (id, user_id, title, description, type, industry, budget_min, budget_max, location, deadline, requirements, tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO opportunities (id, user_id, title, description, type, industry, budget_min, budget_max, location, deadline, expiration_date, requirements, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 opp_id, user_id, title, description, opp_type,
                 kwargs.get('industry'), kwargs.get('budget_min'), kwargs.get('budget_max'),
-                kwargs.get('location'), kwargs.get('deadline'), kwargs.get('requirements'), kwargs.get('tags')
+                kwargs.get('location'), kwargs.get('deadline'), kwargs.get('expiration_date'), kwargs.get('requirements'), kwargs.get('tags')
             ))
-            
+
             conn.commit()
             return opp_id
-            
+
         except Exception as e:
             print(f"Error creating opportunity: {e}")
             conn.rollback()
