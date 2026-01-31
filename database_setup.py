@@ -28,8 +28,6 @@ class DatabaseManager:
         cursor = conn.cursor()
 
         try:
-            # Run migrations first
-            self._run_migrations(cursor, conn)
             # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -185,7 +183,10 @@ class DatabaseManager:
             
             conn.commit()
             print("✅ Database initialized successfully")
-            
+
+            # Run migrations after tables are created
+            self._run_migrations(cursor, conn)
+
             # Create indexes for better performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_role ON users(user_role)')
