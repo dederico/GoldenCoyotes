@@ -942,6 +942,12 @@ DASHBOARD_TEMPLATE = '''
             </a>
             <div class="navbar-nav ms-auto">
                 <span class="navbar-text me-3">¡Hola, {{ user_name }}!</span>
+                <a href="{{ url_for('mis_oportunidades') }}" class="btn btn-outline-info btn-sm me-2">
+                    <i class="fas fa-list"></i> Mis Oportunidades
+                </a>
+                <a href="{{ url_for('opportunities_status') }}" class="btn btn-outline-warning btn-sm me-2">
+                    <i class="fas fa-chart-line"></i> Estado
+                </a>
                 <a href="{{ url_for('invitar_contactos') }}" class="btn btn-outline-light btn-sm me-2">
                     <i class="fas fa-user-plus"></i> Invitar
                 </a>
