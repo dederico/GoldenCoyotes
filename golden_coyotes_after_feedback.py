@@ -173,7 +173,14 @@ class GoldenCoyotesAfterFeedback:
                 except Exception as e:
                     flash(f'Error al crear oportunidad: {e}', 'error')
 
-            return render_template_string(SUBIR_OPORTUNIDAD_TEMPLATE)
+            # Calcular fechas para el formulario
+            today = datetime.now()
+            min_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+            default_date = (today + timedelta(days=30)).strftime('%Y-%m-%d')
+
+            return render_template_string(SUBIR_OPORTUNIDAD_TEMPLATE,
+                                        min_date=min_date,
+                                        default_date=default_date)
         
         # ==================== CUADRANTE 2: OPORTUNIDAD DIRIGIDA ====================
         @self.app.route('/oportunidad-dirigida', methods=['GET', 'POST'])
@@ -208,7 +215,15 @@ class GoldenCoyotesAfterFeedback:
                 except Exception as e:
                     flash(f'Error al enviar oportunidad: {e}', 'error')
 
-            return render_template_string(OPORTUNIDAD_DIRIGIDA_TEMPLATE, contacts=my_contacts)
+            # Calcular fechas para el formulario
+            today = datetime.now()
+            min_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+            default_date = (today + timedelta(days=30)).strftime('%Y-%m-%d')
+
+            return render_template_string(OPORTUNIDAD_DIRIGIDA_TEMPLATE,
+                                        contacts=my_contacts,
+                                        min_date=min_date,
+                                        default_date=default_date)
         
         # ==================== CUADRANTE 3: BUSCO OPORTUNIDAD GENERAL ====================
         @self.app.route('/buscar-oportunidad')
@@ -1151,8 +1166,8 @@ SUBIR_OPORTUNIDAD_TEMPLATE = '''
                             <div class="mb-3">
                                 <label class="form-label">Vigencia de la Oportunidad *</label>
                                 <input type="date" class="form-control" name="expiration_date" required
-                                       min="{{ (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
-                                       value="{{ (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d') }}">
+                                       min="{{ min_date }}"
+                                       value="{{ default_date }}">
                                 <small class="text-muted">
                                     Fecha hasta la cual esta oportunidad estará vigente. Por defecto: 30 días.
                                 </small>
@@ -1294,8 +1309,8 @@ OPORTUNIDAD_DIRIGIDA_TEMPLATE = '''
                             <div class="mb-3">
                                 <label class="form-label">Vigencia de la Oportunidad *</label>
                                 <input type="date" class="form-control" name="expiration_date" required
-                                       min="{{ (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
-                                       value="{{ (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d') }}">
+                                       min="{{ min_date }}"
+                                       value="{{ default_date }}">
                                 <small class="text-muted">
                                     Fecha hasta la cual esta oportunidad estará vigente. Por defecto: 30 días.
                                 </small>
