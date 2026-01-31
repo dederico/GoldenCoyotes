@@ -26,8 +26,10 @@ class DatabaseManager:
         """Initialize database with all required tables"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         try:
+            # Run migrations first
+            self._run_migrations(cursor, conn)
             # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -197,7 +199,25 @@ class DatabaseManager:
             conn.rollback()
         finally:
             conn.close()
-    
+
+    def _run_migrations(self, cursor, conn):
+        """Run database migrations"""
+        try:
+            # Migration 1: Add expiration_date to opportunities table
+            cursor.execute("PRAGMA table_info(opportunities)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'expiration_date' not in columns:
+                print("Running migration: Adding expiration_date to opportunities table...")
+                cursor.execute("ALTER TABLE opportunities ADD COLUMN expiration_date DATE")
+                conn.commit()
+                print("✅ Migration completed: expiration_date column added")
+            else:
+                print("✅ Migration skipped: expiration_date already exists")
+
+        except Exception as e:
+            print(f"⚠️ Migration error (might be ok if column exists): {e}")
+
     def hash_password(self, password):
         """Hash password with salt"""
         salt = os.urandom(32)
