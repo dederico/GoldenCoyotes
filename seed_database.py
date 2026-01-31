@@ -180,7 +180,7 @@ def seed_database():
         if user1_id and user2_id:
             db.create_connection(
                 user_id=user1_id,
-                connected_user_id=user2_id,
+                target_user_id=user2_id,
                 message=message,
                 status='accepted',
                 accepted_at=datetime.now().isoformat()
