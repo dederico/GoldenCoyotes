@@ -422,6 +422,23 @@ class GoldenCoyotesAfterFeedback:
 
             return render_template_string(OPPORTUNITIES_STATUS_TEMPLATE, opportunities=all_opportunities)
 
+        # ==================== ADMIN: SEED DATABASE ====================
+        @self.app.route('/admin/seed-demo-data')
+        def seed_demo_data():
+            """Poblar base de datos con datos de demostración (temporal)"""
+            try:
+                import seed_database
+                seed_database.seed_database()
+                return jsonify({
+                    'success': True,
+                    'message': 'Base de datos poblada con datos de demostración exitosamente'
+                })
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
+
         @self.app.route('/logout')
         @self.require_login
         def logout():
