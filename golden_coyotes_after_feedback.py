@@ -1339,43 +1339,43 @@ OPORTUNIDAD_DIRIGIDA_TEMPLATE = '''
                                 </small>
                             </div>
 
-                            <!-- Selector de Contactos -->
-                            <div class="mb-3">
-                                <label class="form-label">Seleccionar Contactos *</label>
-                                <p class="text-muted small">Elige a cuáles de tus contactos de confianza enviar esta oportunidad:</p>
-                                <div class="row">
-                                    {% if contacts %}
-                                        {% for contact in contacts %}
-                                            <div class="col-md-6 mb-2">
-                                                <div class="form-check">
-                                                    <input class="form-check-input" type="checkbox" name="selected_contacts" value="{{ contact.id }}">
-                                                    <label class="form-check-label">
-                                                        <i class="fas fa-user-friends text-info"></i>
-                                                        <strong>{{ contact.name }}</strong>
-                                                        <br><small class="text-muted">{{ contact.relationship }}</small>
-                                                    </label>
-                                                </div>
-                                            </div>
-                                        {% endfor %}
-                                    {% else %}
-                                        <div class="col-12">
-                                            <div class="alert alert-info">
-                                                <i class="fas fa-info-circle"></i>
-                                                Aún no tienes contactos en tu red Friends & Family. 
-                                                <a href="{{ url_for('invitar_contactos') }}" class="alert-link">Invita contactos aquí</a>
-                                            </div>
-                                        </div>
-                                    {% endif %}
-                                </div>
-                            </div>
-
                             <div class="mb-3">
                                 <label class="form-label">Fotos o Videos (opcional)</label>
-                                <input type="file" class="form-control" name="media_files" multiple 
+                                <input type="file" class="form-control" name="media_files" multiple
                                        accept="image/*,video/*">
                                 <small class="text-muted">
                                     Archivos que ayuden a explicar tu oportunidad a tus contactos
                                 </small>
+                            </div>
+
+                            <!-- Selector de Contactos -->
+                            <div class="mb-3">
+                                <label class="form-label">Seleccionar Contactos *</label>
+                                <p class="text-muted small">Elige a cuáles de tus contactos de confianza enviar esta oportunidad:</p>
+                                {% if contacts %}
+                                    <div class="border rounded p-3" style="max-height: 300px; overflow-y: auto; background-color: #f8f9fa;">
+                                        <div class="row">
+                                            {% for contact in contacts %}
+                                                <div class="col-md-6 mb-2">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" name="selected_contacts" value="{{ contact.id }}">
+                                                        <label class="form-check-label">
+                                                            <i class="fas fa-user-friends text-info"></i>
+                                                            <strong>{{ contact.name }}</strong>
+                                                            <br><small class="text-muted">{{ contact.relationship }}</small>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i>
+                                        Aún no tienes contactos en tu red Friends & Family.
+                                        <a href="{{ url_for('invitar_contactos') }}" class="alert-link">Invita contactos aquí</a>
+                                    </div>
+                                {% endif %}
                             </div>
 
                             <div class="alert alert-warning">
