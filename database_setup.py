@@ -69,6 +69,7 @@ class DatabaseManager:
                     location TEXT,
                     deadline DATE,
                     expiration_date DATE,
+                    image_url TEXT,
                     requirements TEXT,
                     tags TEXT,
                     is_active INTEGER DEFAULT 1,
@@ -204,10 +205,11 @@ class DatabaseManager:
     def _run_migrations(self, cursor, conn):
         """Run database migrations"""
         try:
-            # Migration 1: Add expiration_date to opportunities table
+            # Get current columns
             cursor.execute("PRAGMA table_info(opportunities)")
             columns = [column[1] for column in cursor.fetchall()]
 
+            # Migration 1: Add expiration_date to opportunities table
             if 'expiration_date' not in columns:
                 print("Running migration: Adding expiration_date to opportunities table...")
                 cursor.execute("ALTER TABLE opportunities ADD COLUMN expiration_date DATE")
@@ -215,6 +217,18 @@ class DatabaseManager:
                 print("✅ Migration completed: expiration_date column added")
             else:
                 print("✅ Migration skipped: expiration_date already exists")
+
+            # Migration 2: Add image_url to opportunities table
+            cursor.execute("PRAGMA table_info(opportunities)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'image_url' not in columns:
+                print("Running migration: Adding image_url to opportunities table...")
+                cursor.execute("ALTER TABLE opportunities ADD COLUMN image_url TEXT")
+                conn.commit()
+                print("✅ Migration completed: image_url column added")
+            else:
+                print("✅ Migration skipped: image_url already exists")
 
         except Exception as e:
             print(f"⚠️ Migration error (might be ok if column exists): {e}")
@@ -317,12 +331,12 @@ class DatabaseManager:
             opp_id = str(uuid.uuid4())
 
             cursor.execute('''
-                INSERT INTO opportunities (id, user_id, title, description, type, industry, budget_min, budget_max, location, deadline, expiration_date, requirements, tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO opportunities (id, user_id, title, description, type, industry, budget_min, budget_max, location, deadline, expiration_date, image_url, requirements, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 opp_id, user_id, title, description, opp_type,
                 kwargs.get('industry'), kwargs.get('budget_min'), kwargs.get('budget_max'),
-                kwargs.get('location'), kwargs.get('deadline'), kwargs.get('expiration_date'), kwargs.get('requirements'), kwargs.get('tags')
+                kwargs.get('location'), kwargs.get('deadline'), kwargs.get('expiration_date'), kwargs.get('image_url'), kwargs.get('requirements'), kwargs.get('tags')
             ))
 
             conn.commit()

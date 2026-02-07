@@ -161,6 +161,7 @@ class GoldenCoyotesAfterFeedback:
                     'industry': data.get('industry'),
                     'type': data.get('type'),  # producto o servicio
                     'expiration_date': data.get('expiration_date'),
+                    'image_url': data.get('image_url'),
                     'is_public': True,  # Siempre pública en cuadrante 1
                     'media_files': data.get('media_files', []),
                     'created_at': datetime.now().isoformat()
@@ -200,6 +201,7 @@ class GoldenCoyotesAfterFeedback:
                     'industry': data.get('industry'),
                     'type': data.get('type'),
                     'expiration_date': data.get('expiration_date'),
+                    'image_url': data.get('image_url'),
                     'is_public': False,  # Privada/dirigida
                     'directed_to': data.get('selected_contacts', []),
                     'media_files': data.get('media_files', []),
@@ -513,6 +515,7 @@ class GoldenCoyotesAfterFeedback:
             opp_type=opportunity_data.get('type'),
             industry=opportunity_data.get('industry'),
             expiration_date=expiration_date,
+            image_url=opportunity_data.get('image_url'),
             tags=','.join(opportunity_data.get('directed_to', [])) if 'directed_to' in opportunity_data else None
         )
         return opp_id
@@ -1197,11 +1200,11 @@ SUBIR_OPORTUNIDAD_TEMPLATE = '''
                             </div>
 
                             <div class="mb-3">
-                                <label class="form-label">Fotos o Videos (opcional)</label>
-                                <input type="file" class="form-control" name="media_files" multiple
-                                       accept="image/*,video/*">
+                                <label class="form-label">Imagen de la Oportunidad (opcional)</label>
+                                <input type="url" class="form-control" name="image_url"
+                                       placeholder="https://ejemplo.com/imagen.jpg">
                                 <small class="text-muted">
-                                    Puedes subir imágenes o videos que ayuden a explicar tu oportunidad
+                                    Pega la URL de una imagen que represente tu oportunidad (ej: desde Imgur, Dropbox, Google Drive público)
                                 </small>
                             </div>
 
@@ -1340,11 +1343,11 @@ OPORTUNIDAD_DIRIGIDA_TEMPLATE = '''
                             </div>
 
                             <div class="mb-3">
-                                <label class="form-label">Fotos o Videos (opcional)</label>
-                                <input type="file" class="form-control" name="media_files" multiple
-                                       accept="image/*,video/*">
+                                <label class="form-label">Imagen de la Oportunidad (opcional)</label>
+                                <input type="url" class="form-control" name="image_url"
+                                       placeholder="https://ejemplo.com/imagen.jpg">
                                 <small class="text-muted">
-                                    Archivos que ayuden a explicar tu oportunidad a tus contactos
+                                    Pega la URL de una imagen que represente tu oportunidad (ej: desde Imgur, Dropbox, Google Drive público)
                                 </small>
                             </div>
 
@@ -2501,6 +2504,10 @@ MIS_OPORTUNIDADES_TEMPLATE = '''
                         {% for opp in opportunities %}
                             <div class="col-md-6 mb-3">
                                 <div class="card h-100">
+                                    {% if opp.image_url %}
+                                        <img src="{{ opp.image_url }}" class="card-img-top" alt="{{ opp.title }}"
+                                             style="height: 200px; object-fit: cover;">
+                                    {% endif %}
                                     <div class="card-body">
                                         <h5 class="card-title">{{ opp.title }}</h5>
                                         <p class="card-text">{{ opp.description[:150] }}...</p>
