@@ -387,13 +387,131 @@ class GoldenCoyotesAfterFeedback:
             user_id = session['user_id']
             opportunity_id = data.get('opportunity_id')
             message = data.get('message')
-            
+
             try:
                 self.send_contact_message(user_id, opportunity_id, message)
                 return jsonify({'success': True, 'message': 'Mensaje enviado'})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
-        
+
+        # ==================== API ENDPOINTS PARA CONEXIONES ====================
+        @self.app.route('/api/connections', methods=['GET'])
+        @self.require_login
+        def get_connections():
+            """Obtener todas las conexiones del usuario"""
+            user_id = session['user_id']
+            status = request.args.get('status', 'accepted')
+
+            try:
+                connections = self.db.get_user_connections(user_id, status=status)
+                return jsonify({'success': True, 'connections': connections})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/connections/pending', methods=['GET'])
+        @self.require_login
+        def get_pending_connections():
+            """Obtener solicitudes de conexión pendientes"""
+            user_id = session['user_id']
+
+            try:
+                pending = self.db.get_pending_connection_requests(user_id)
+                return jsonify({'success': True, 'pending_requests': pending, 'count': len(pending)})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/connections/request', methods=['POST'])
+        @self.require_login
+        def request_connection():
+            """Solicitar conexión con otro usuario"""
+            data = request.get_json()
+            user_id = session['user_id']
+            target_user_id = data.get('target_user_id')
+            message = data.get('message', '')
+
+            if not target_user_id:
+                return jsonify({'success': False, 'error': 'target_user_id requerido'}), 400
+
+            if target_user_id == user_id:
+                return jsonify({'success': False, 'error': 'No puedes conectarte contigo mismo'}), 400
+
+            try:
+                # Verificar que el usuario destino existe
+                target_user = self.db.get_user(target_user_id)
+                if not target_user:
+                    return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
+
+                # Crear solicitud de conexión
+                connection_id = self.db.create_connection(user_id, target_user_id, message, status='pending')
+
+                if connection_id:
+                    return jsonify({
+                        'success': True,
+                        'message': 'Solicitud de conexión enviada',
+                        'connection_id': connection_id
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'La conexión ya existe o hubo un error'
+                    }), 400
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/connections/accept', methods=['POST'])
+        @self.require_login
+        def accept_connection():
+            """Aceptar una solicitud de conexión"""
+            data = request.get_json()
+            user_id = session['user_id']
+            connection_id = data.get('connection_id')
+
+            if not connection_id:
+                return jsonify({'success': False, 'error': 'connection_id requerido'}), 400
+
+            try:
+                success = self.db.accept_connection(connection_id, user_id)
+
+                if success:
+                    return jsonify({
+                        'success': True,
+                        'message': 'Conexión aceptada exitosamente'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No se pudo aceptar la conexión. Verifica que la solicitud existe y te pertenece.'
+                    }), 400
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/connections/reject', methods=['POST'])
+        @self.require_login
+        def reject_connection():
+            """Rechazar una solicitud de conexión"""
+            data = request.get_json()
+            user_id = session['user_id']
+            connection_id = data.get('connection_id')
+
+            if not connection_id:
+                return jsonify({'success': False, 'error': 'connection_id requerido'}), 400
+
+            try:
+                success = self.db.reject_connection(connection_id, user_id)
+
+                if success:
+                    return jsonify({
+                        'success': True,
+                        'message': 'Conexión rechazada'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No se pudo rechazar la conexión. Verifica que la solicitud existe y te pertenece.'
+                    }), 400
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
         # ==================== NUEVAS RUTAS FEEDBACK ====================
         @self.app.route('/mis-oportunidades')
         @self.require_login
@@ -406,8 +524,20 @@ class GoldenCoyotesAfterFeedback:
         @self.app.route('/opportunities-status')
         @self.require_login
         def opportunities_status():
-            """Ver estado de todas las oportunidades con vigencia"""
-            all_opportunities = self.db.get_opportunities(limit=100)
+            """Ver estado de oportunidades de mi red con vigencia"""
+            user_id = session['user_id']
+
+            # CAMBIO CRÍTICO: Solo mostrar oportunidades de mi red + mis propias oportunidades
+            network_opportunities = self.db.get_opportunities(network_only=True, requesting_user_id=user_id, limit=50)
+            my_opportunities = self.db.get_opportunities(user_id=user_id, limit=50)
+
+            # Combinar ambas listas sin duplicados
+            all_opportunities = my_opportunities.copy()
+            existing_ids = {opp['id'] for opp in my_opportunities}
+
+            for opp in network_opportunities:
+                if opp['id'] not in existing_ids:
+                    all_opportunities.append(opp)
 
             # Calcular estado de vigencia para cada oportunidad
             for opp in all_opportunities:
@@ -423,6 +553,27 @@ class GoldenCoyotesAfterFeedback:
                     opp['is_expiring_soon'] = False
 
             return render_template_string(OPPORTUNITIES_STATUS_TEMPLATE, opportunities=all_opportunities)
+
+        # ==================== VISTA DE MIS CONTACTOS ====================
+        @self.app.route('/mis-contactos')
+        @self.require_login
+        def mis_contactos():
+            """Ver y gestionar mis contactos y solicitudes de conexión"""
+            user_id = session['user_id']
+
+            # Obtener contactos aceptados
+            my_contacts = self.db.get_user_connections(user_id, status='accepted')
+
+            # Obtener solicitudes pendientes (que me enviaron a mí)
+            pending_requests = self.db.get_pending_connection_requests(user_id)
+
+            return render_template_string(
+                MIS_CONTACTOS_TEMPLATE,
+                contacts=my_contacts,
+                pending_requests=pending_requests,
+                total_contacts=len(my_contacts),
+                pending_count=len(pending_requests)
+            )
 
         # ==================== ADMIN: SEED DATABASE ====================
         @self.app.route('/admin/seed-demo-data')
@@ -451,52 +602,61 @@ class GoldenCoyotesAfterFeedback:
     
     # ==================== MÉTODOS DE DATOS ====================
     def get_public_opportunities(self, user_id):
-        """Obtener oportunidades públicas de la red del usuario"""
-        # Mock data - en producción sería consulta a BD
-        return [
-            {
-                'id': 'opp1',
-                'title': 'Startup FinTech busca socio técnico',
-                'description': 'Plataforma de pagos digitales necesita CTO',
-                'industry': 'Fintech',
-                'type': 'servicio',
-                'owner_name': 'Ana García',
-                'created_at': '2025-01-15'
-            }
-        ]
-    
+        """Obtener oportunidades públicas de la red del usuario (solo de contactos)"""
+        # CAMBIO CRÍTICO: Ahora filtra solo oportunidades de mi red de contactos
+        return self.db.get_opportunities(network_only=True, requesting_user_id=user_id, limit=50)
+
     def get_directed_opportunities(self, user_id):
-        """Obtener oportunidades dirigidas al usuario"""
-        return [
-            {
-                'id': 'opp2',
-                'title': 'Inversión en e-commerce',
-                'description': 'Tienda online necesita capital de trabajo',
-                'industry': 'E-commerce',
-                'type': 'producto',
-                'sender_name': 'Carlos López',
-                'sent_at': '2025-01-14'
-            }
-        ]
-    
+        """Obtener oportunidades dirigidas específicamente al usuario"""
+        # Buscar oportunidades donde el user_id esté en el campo tags (dirigidas a él)
+        all_opportunities = self.db.get_opportunities(network_only=True, requesting_user_id=user_id, limit=50)
+
+        # Filtrar solo las que me mencionan en tags
+        directed = []
+        for opp in all_opportunities:
+            tags = opp.get('tags', '')
+            if tags and user_id in tags.split(','):
+                directed.append(opp)
+
+        return directed
+
     def get_my_opportunities(self, user_id):
         """Obtener las oportunidades creadas por el usuario"""
-        return []
-    
+        return self.db.get_opportunities(user_id=user_id)
+
     def get_pending_invitations(self, user_id):
-        """Obtener invitaciones pendientes"""
-        return []
-    
+        """Obtener invitaciones pendientes de conexión"""
+        return self.db.get_pending_connection_requests(user_id)
+
     def get_user_contacts(self, user_id):
-        """Obtener contactos del usuario"""
-        return [
-            {'id': 'c1', 'name': 'Juan Pérez', 'relationship': 'Amigo'},
-            {'id': 'c2', 'name': 'María Silva', 'relationship': 'Familiar'}
-        ]
-    
+        """Obtener contactos aceptados del usuario"""
+        connections = self.db.get_user_connections(user_id, status='accepted')
+
+        # Formatear para vista
+        contacts = []
+        for conn in connections:
+            contacts.append({
+                'id': conn['id'],
+                'name': conn['name'],
+                'email': conn['email'],
+                'company': conn.get('company', ''),
+                'position': conn.get('position', ''),
+                'industry': conn.get('industry', ''),
+                'relationship': 'Contacto de confianza'
+            })
+
+        return contacts
+
     def get_ai_recommended_opportunities(self, user_id):
-        """Oportunidades recomendadas por IA"""
-        return self.get_public_opportunities(user_id)  # Mock
+        """Oportunidades recomendadas por IA (solo de mi red)"""
+        # Obtener oportunidades de mi red y usar AI matcher para scoring
+        network_opportunities = self.get_public_opportunities(user_id)
+
+        # Si hay AI matching engine, usar para recomendar
+        if hasattr(self, 'ai_matcher') and self.ai_matcher:
+            return self.ai_matcher.get_recommended_opportunities(user_id, network_opportunities)
+
+        return network_opportunities
     
     def get_user_company_access(self, user_id):
         """Obtener empresas donde el usuario tiene acceso"""
@@ -2666,6 +2826,215 @@ OPPORTUNITIES_STATUS_TEMPLATE = '''
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+'''
+
+# Template para vista de Mis Contactos
+MIS_CONTACTOS_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Contactos - Golden Coyotes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-light">
+                <i class="fas fa-arrow-left"></i> Volver al Dashboard
+            </a>
+            <span class="navbar-brand">Mis Contactos</span>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- Métricas -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="fas fa-users text-primary"></i> Contactos Aceptados
+                        </h5>
+                        <h2 class="mb-0">{{ total_contacts }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="fas fa-clock text-warning"></i> Solicitudes Pendientes
+                        </h5>
+                        <h2 class="mb-0">{{ pending_count }}</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Solicitudes Pendientes -->
+        {% if pending_requests %}
+        <div class="card mb-4">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">
+                    <i class="fas fa-bell"></i> Solicitudes de Conexión Pendientes
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for request in pending_requests %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card">
+                            <div class="card-body">
+                                <h6 class="card-title">
+                                    <i class="fas fa-user"></i> {{ request.requester_name }}
+                                </h6>
+                                <p class="card-text small mb-2">
+                                    <strong>Email:</strong> {{ request.requester_email }}<br>
+                                    {% if request.company %}
+                                    <strong>Empresa:</strong> {{ request.company }}<br>
+                                    {% endif %}
+                                    {% if request.position %}
+                                    <strong>Cargo:</strong> {{ request.position }}<br>
+                                    {% endif %}
+                                    {% if request.industry %}
+                                    <strong>Industria:</strong> {{ request.industry }}<br>
+                                    {% endif %}
+                                </p>
+                                {% if request.message %}
+                                <p class="card-text small text-muted fst-italic">
+                                    "{{ request.message }}"
+                                </p>
+                                {% endif %}
+                                <div class="d-grid gap-2 d-md-flex">
+                                    <button class="btn btn-success btn-sm" onclick="acceptConnection('{{ request.id }}')">
+                                        <i class="fas fa-check"></i> Aceptar
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" onclick="rejectConnection('{{ request.id }}')">
+                                        <i class="fas fa-times"></i> Rechazar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Lista de Contactos -->
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-address-book"></i> Mis Contactos ({{ total_contacts }})
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if contacts %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Email</th>
+                                <th>Empresa</th>
+                                <th>Cargo</th>
+                                <th>Industria</th>
+                                <th>Desde</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for contact in contacts %}
+                            <tr>
+                                <td>
+                                    <i class="fas fa-user-circle text-primary"></i>
+                                    <strong>{{ contact.name }}</strong>
+                                </td>
+                                <td>{{ contact.email }}</td>
+                                <td>{{ contact.company or '-' }}</td>
+                                <td>{{ contact.position or '-' }}</td>
+                                <td>{{ contact.industry or '-' }}</td>
+                                <td>
+                                    <small class="text-muted">
+                                        {{ contact.created_at[:10] if contact.created_at else '-' }}
+                                    </small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info text-center">
+                    <i class="fas fa-info-circle fa-3x mb-3"></i>
+                    <h5>Aún no tienes contactos en tu red</h5>
+                    <p>Invita a tus amigos, familiares y colegas para empezar a compartir oportunidades.</p>
+                    <a href="{{ url_for('invitar_contactos') }}" class="btn btn-primary">
+                        <i class="fas fa-user-plus"></i> Invitar Contactos
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function acceptConnection(connectionId) {
+            try {
+                const response = await fetch('/api/connections/accept', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ connection_id: connectionId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Conexión aceptada exitosamente');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error al aceptar conexión: ' + error);
+            }
+        }
+
+        async function rejectConnection(connectionId) {
+            if (!confirm('¿Estás seguro de rechazar esta solicitud?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/connections/reject', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ connection_id: connectionId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Conexión rechazada');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error al rechazar conexión: ' + error);
+            }
+        }
+    </script>
 </body>
 </html>
 '''

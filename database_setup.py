@@ -349,33 +349,56 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def get_opportunities(self, user_id=None, limit=50):
-        """Get opportunities, optionally filtered by user"""
+    def get_opportunities(self, user_id=None, limit=50, network_only=False, requesting_user_id=None):
+        """
+        Get opportunities, optionally filtered by user or network
+
+        Args:
+            user_id: Filter opportunities created by this user
+            limit: Maximum number of results
+            network_only: If True, only show opportunities from user's network
+            requesting_user_id: User requesting the opportunities (for network filtering)
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         try:
             if user_id:
+                # Get opportunities created by specific user
                 cursor.execute('''
-                    SELECT o.*, u.name as creator_name 
-                    FROM opportunities o 
-                    JOIN users u ON o.user_id = u.id 
-                    WHERE o.user_id = ? AND o.is_active = 1 
+                    SELECT o.*, u.name as creator_name
+                    FROM opportunities o
+                    JOIN users u ON o.user_id = u.id
+                    WHERE o.user_id = ? AND o.is_active = 1
                     ORDER BY o.created_at DESC LIMIT ?
                 ''', (user_id, limit))
-            else:
+            elif network_only and requesting_user_id:
+                # Only show opportunities from user's network (accepted connections)
                 cursor.execute('''
-                    SELECT o.*, u.name as creator_name 
-                    FROM opportunities o 
-                    JOIN users u ON o.user_id = u.id 
-                    WHERE o.is_active = 1 
+                    SELECT DISTINCT o.*, u.name as creator_name
+                    FROM opportunities o
+                    JOIN users u ON o.user_id = u.id
+                    INNER JOIN connections c ON (
+                        (c.user_id = ? AND c.connected_user_id = o.user_id)
+                        OR (c.connected_user_id = ? AND c.user_id = o.user_id)
+                    )
+                    WHERE c.status = 'accepted' AND o.is_active = 1 AND o.user_id != ?
+                    ORDER BY o.created_at DESC LIMIT ?
+                ''', (requesting_user_id, requesting_user_id, requesting_user_id, limit))
+            else:
+                # Get all opportunities (admin view or no filter)
+                cursor.execute('''
+                    SELECT o.*, u.name as creator_name
+                    FROM opportunities o
+                    JOIN users u ON o.user_id = u.id
+                    WHERE o.is_active = 1
                     ORDER BY o.created_at DESC LIMIT ?
                 ''', (limit,))
-            
+
             results = cursor.fetchall()
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in results]
-            
+
         except Exception as e:
             print(f"Error getting opportunities: {e}")
             return []
@@ -407,28 +430,153 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def get_user_connections(self, user_id):
-        """Get user's connections"""
+    def get_user_connections(self, user_id, status='accepted'):
+        """
+        Get user's connections
+
+        Args:
+            user_id: User ID to get connections for
+            status: Connection status ('accepted', 'pending', 'rejected', or None for all)
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute('''
-                SELECT c.*, u.name, u.email, u.industry, u.location
-                FROM connections c
-                JOIN users u ON (c.connected_user_id = u.id OR c.user_id = u.id)
-                WHERE (c.user_id = ? OR c.connected_user_id = ?) 
-                AND c.status = 'accepted' 
-                AND u.id != ?
-            ''', (user_id, user_id, user_id))
-            
+            if status:
+                cursor.execute('''
+                    SELECT c.*, u.name, u.email, u.industry, u.location, u.company, u.position
+                    FROM connections c
+                    JOIN users u ON (c.connected_user_id = u.id OR c.user_id = u.id)
+                    WHERE (c.user_id = ? OR c.connected_user_id = ?)
+                    AND c.status = ?
+                    AND u.id != ?
+                    ORDER BY c.created_at DESC
+                ''', (user_id, user_id, status, user_id))
+            else:
+                cursor.execute('''
+                    SELECT c.*, u.name, u.email, u.industry, u.location, u.company, u.position
+                    FROM connections c
+                    JOIN users u ON (c.connected_user_id = u.id OR c.user_id = u.id)
+                    WHERE (c.user_id = ? OR c.connected_user_id = ?)
+                    AND u.id != ?
+                    ORDER BY c.created_at DESC
+                ''', (user_id, user_id, user_id))
+
             results = cursor.fetchall()
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in results]
-            
+
         except Exception as e:
             print(f"Error getting connections: {e}")
             return []
+        finally:
+            conn.close()
+
+    def get_pending_connection_requests(self, user_id):
+        """Get pending connection requests received by user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT c.*, u.name as requester_name, u.email as requester_email,
+                       u.company, u.position, u.industry
+                FROM connections c
+                JOIN users u ON c.user_id = u.id
+                WHERE c.connected_user_id = ? AND c.status = 'pending'
+                ORDER BY c.created_at DESC
+            ''', (user_id,))
+
+            results = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in results]
+
+        except Exception as e:
+            print(f"Error getting pending requests: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def accept_connection(self, connection_id, user_id):
+        """Accept a connection request"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Verify this connection belongs to the user
+            cursor.execute('''
+                SELECT id FROM connections
+                WHERE id = ? AND connected_user_id = ? AND status = 'pending'
+            ''', (connection_id, user_id))
+
+            if not cursor.fetchone():
+                return False
+
+            cursor.execute('''
+                UPDATE connections
+                SET status = 'accepted', accepted_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (connection_id,))
+
+            conn.commit()
+            return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error accepting connection: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def reject_connection(self, connection_id, user_id):
+        """Reject a connection request"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Verify this connection belongs to the user
+            cursor.execute('''
+                SELECT id FROM connections
+                WHERE id = ? AND connected_user_id = ? AND status = 'pending'
+            ''', (connection_id, user_id))
+
+            if not cursor.fetchone():
+                return False
+
+            cursor.execute('''
+                UPDATE connections
+                SET status = 'rejected'
+                WHERE id = ?
+            ''', (connection_id,))
+
+            conn.commit()
+            return cursor.rowcount > 0
+
+        except Exception as e:
+            print(f"Error rejecting connection: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def is_connected(self, user_id, target_user_id):
+        """Check if two users are connected"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT id FROM connections
+                WHERE ((user_id = ? AND connected_user_id = ?)
+                   OR (user_id = ? AND connected_user_id = ?))
+                AND status = 'accepted'
+            ''', (user_id, target_user_id, target_user_id, user_id))
+
+            return cursor.fetchone() is not None
+
+        except Exception as e:
+            print(f"Error checking connection: {e}")
+            return False
         finally:
             conn.close()
     
