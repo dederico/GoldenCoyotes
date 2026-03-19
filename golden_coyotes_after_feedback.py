@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for, flash, session
+from flask import Flask, abort, render_template_string, request, jsonify, redirect, url_for, flash, session
 from flask_cors import CORS
 
 from database_setup import DatabaseManager
@@ -135,10 +135,12 @@ class GoldenCoyotesAfterFeedback:
         def dashboard():
             """Dashboard principal con los 4 cuadrantes según feedback"""
             user_id = session['user_id']
+            ai_opportunities = self.get_ai_recommended_opportunities(user_id)
+            ai_opportunity_ids = [opp['id'] for opp in ai_opportunities if opp.get('id')]
             
             # Obtener contadores para notificaciones
             counters = {
-                'oportunidades_publicas': len(self.get_public_opportunities(user_id)),
+                'oportunidades_publicas': self.db.count_unviewed_opportunities(user_id, ai_opportunity_ids),
                 'oportunidades_dirigidas': len(self.get_directed_opportunities(user_id)),
                 'mis_oportunidades': len(self.get_my_opportunities(user_id)),
                 'invitaciones_pendientes': len(self.get_pending_invitations(user_id))
@@ -234,20 +236,114 @@ class GoldenCoyotesAfterFeedback:
             """Cuadrante 3: Ver oportunidades públicas con opción IA"""
             user_id = session['user_id']
             view_type = request.args.get('view', 'ai')  # 'ai' o 'all'
+            selected_industry = (request.args.get('industry') or '').strip()
+            selected_type = (request.args.get('type') or '').strip()
+            search_term = (request.args.get('search') or '').strip()
             
             if view_type == 'ai':
-                # Oportunidades recomendadas por IA
+                # La IA recomienda usando el perfil del usuario; los filtros refinan la lista resultante.
                 opportunities = self.get_ai_recommended_opportunities(user_id)
-                title = "Oportunidades Recomendadas por IA"
+                title = "Recomendaciones de GOLDEN"
+                explanation = "GOLDEN, nuestro agente IA, usa la información de tu perfil al registrarte para proponerte oportunidades. Los filtros que selecciones aquí refinan ese resultado."
             else:
                 # Todas las oportunidades públicas
                 opportunities = self.get_public_opportunities(user_id)
                 title = "Todas las Oportunidades Públicas"
+                explanation = "Esta vista muestra las oportunidades disponibles en tu red. Los filtros que selecciones aquí refinan lo que ves."
+
+            opportunities = self.filter_opportunities_for_display(
+                opportunities,
+                industry=selected_industry,
+                opportunity_type=selected_type,
+                search_term=search_term
+            )
+            opportunities = self.attach_review_statuses(
+                user_id,
+                opportunities,
+                exclude_discarded=True
+            )
+            if view_type == 'ai':
+                opportunities = self.attach_golden_messages(opportunities)
             
             return render_template_string(BUSCAR_OPORTUNIDAD_TEMPLATE, 
                                        opportunities=opportunities, 
                                        title=title, 
-                                       view_type=view_type)
+                                       view_type=view_type,
+                                       explanation=explanation,
+                                       selected_industry=selected_industry,
+                                       selected_type=selected_type,
+                                       search_term=search_term,
+                                       page_mode='browse')
+
+        @self.app.route('/mis-oportunidades-interes')
+        @self.require_login
+        def mis_oportunidades_interes():
+            """Ver oportunidades marcadas con interés."""
+            user_id = session['user_id']
+            selected_industry = (request.args.get('industry') or '').strip()
+            selected_type = (request.args.get('type') or '').strip()
+            search_term = (request.args.get('search') or '').strip()
+
+            opportunities = self.get_public_opportunities(user_id)
+            opportunities = self.filter_opportunities_for_display(
+                opportunities,
+                industry=selected_industry,
+                opportunity_type=selected_type,
+                search_term=search_term
+            )
+            opportunities = self.attach_review_statuses(
+                user_id,
+                opportunities,
+                exclude_discarded=True
+            )
+            opportunities = self.filter_opportunities_by_review_status(opportunities, 'interested')
+
+            return render_template_string(
+                BUSCAR_OPORTUNIDAD_TEMPLATE,
+                opportunities=opportunities,
+                title='Mis Oportunidades de Interés',
+                view_type='interest',
+                explanation='Aquí se concentran únicamente las oportunidades que marcaste en amarillo para consultarlas después sin perder las demás.',
+                selected_industry=selected_industry,
+                selected_type=selected_type,
+                search_term=search_term,
+                page_mode='interest'
+            )
+
+        @self.app.route('/mis-oportunidades-standby')
+        @self.require_login
+        def mis_oportunidades_standby():
+            """Ver oportunidades dejadas en stand by."""
+            user_id = session['user_id']
+            selected_industry = (request.args.get('industry') or '').strip()
+            selected_type = (request.args.get('type') or '').strip()
+            search_term = (request.args.get('search') or '').strip()
+
+            opportunities = self.get_public_opportunities(user_id)
+            opportunities = self.filter_opportunities_for_display(
+                opportunities,
+                industry=selected_industry,
+                opportunity_type=selected_type,
+                search_term=search_term
+            )
+            opportunities = self.attach_review_statuses(
+                user_id,
+                opportunities,
+                exclude_discarded=True
+            )
+            opportunities = self.filter_opportunities_by_review_status(opportunities, 'standby')
+
+            return render_template_string(
+                BUSCAR_OPORTUNIDAD_TEMPLATE,
+                opportunities=opportunities,
+                title='Mis Oportunidades en Stand By',
+                view_type='standby',
+                explanation='Aquí se guardan las oportunidades que dejaste en stand by para retomarlas después sin mezclarlas con tus intereses prioritarios.',
+                selected_industry=selected_industry,
+                selected_type=selected_type,
+                search_term=search_term,
+                page_mode='standby'
+            )
         
         # ==================== CUADRANTE 4: OPORTUNIDADES DIRIGIDAS A MÍ ====================
         @self.app.route('/mis-oportunidades-dirigidas')
@@ -378,6 +474,29 @@ class GoldenCoyotesAfterFeedback:
                 return jsonify({'success': True})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
+
+        @self.app.route('/api/opportunity-review-action', methods=['POST'])
+        @self.require_login
+        def opportunity_review_action():
+            """Guardar acción de revisión: interés, stand by o descartar."""
+            data = request.get_json() or {}
+            user_id = session['user_id']
+            opportunity_id = data.get('opportunity_id')
+            action = data.get('action')
+
+            if action not in {'interested', 'standby', 'discarded'}:
+                return jsonify({'success': False, 'error': 'Acción inválida'}), 400
+
+            if not opportunity_id:
+                return jsonify({'success': False, 'error': 'opportunity_id requerido'}), 400
+
+            try:
+                success = self.set_opportunity_review_action(user_id, opportunity_id, action)
+                if not success:
+                    return jsonify({'success': False, 'error': 'No se pudo guardar la acción'}), 500
+                return jsonify({'success': True, 'action': action})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
         
         @self.app.route('/api/contact-opportunity-owner', methods=['POST'])
         @self.require_login
@@ -521,6 +640,27 @@ class GoldenCoyotesAfterFeedback:
             user_opportunities = self.db.get_opportunities(user_id=user_id)
             return render_template_string(MIS_OPORTUNIDADES_TEMPLATE, opportunities=user_opportunities)
 
+        @self.app.route('/oportunidades/<opportunity_id>')
+        @self.require_login
+        def opportunity_detail(opportunity_id):
+            """Ver detalle completo de una oportunidad accesible para el usuario."""
+            user_id = session['user_id']
+            opportunity = self.get_accessible_opportunity(user_id, opportunity_id)
+
+            if not opportunity:
+                abort(404)
+
+            is_owner = opportunity['user_id'] == user_id
+            if not is_owner:
+                self.db.record_opportunity_view(user_id, opportunity_id)
+                opportunity['views'] = (opportunity.get('views') or 0) + 1
+            return render_template_string(
+                OPPORTUNITY_DETAIL_TEMPLATE,
+                opportunity=opportunity,
+                is_owner=is_owner,
+                back_url=request.referrer or url_for('dashboard')
+            )
+
         @self.app.route('/opportunities-status')
         @self.require_login
         def opportunities_status():
@@ -653,14 +793,115 @@ class GoldenCoyotesAfterFeedback:
         network_opportunities = self.get_public_opportunities(user_id)
 
         # Si hay AI matching engine, usar para recomendar
-        if hasattr(self, 'ai_matcher') and self.ai_matcher:
-            return self.ai_matcher.get_recommended_opportunities(user_id, network_opportunities)
+        if hasattr(self, 'ai_matcher') and self.ai_matcher and hasattr(self.ai_matcher, 'calculate_opportunity_matches'):
+            try:
+                matches = self.ai_matcher.calculate_opportunity_matches(user_id, limit=len(network_opportunities) or 10)
+                matched_by_id = {
+                    match['opportunity']['id']: {
+                        **match['opportunity'],
+                        'match_score': match.get('score'),
+                        'match_reasoning': match.get('reasoning')
+                    }
+                    for match in matches if match.get('opportunity', {}).get('id')
+                }
+
+                ordered = []
+                used_ids = set()
+                for match in matches:
+                    opp = match.get('opportunity')
+                    if opp and opp.get('id') in matched_by_id and opp['id'] not in used_ids:
+                        ordered.append(matched_by_id[opp['id']])
+                        used_ids.add(opp['id'])
+
+                for opp in network_opportunities:
+                    if opp.get('id') not in used_ids:
+                        ordered.append(opp)
+
+                return ordered
+            except Exception:
+                return network_opportunities
 
         return network_opportunities
     
     def get_user_company_access(self, user_id):
         """Obtener empresas donde el usuario tiene acceso"""
         return []
+
+    def filter_opportunities_for_display(self, opportunities, industry='', opportunity_type='', search_term=''):
+        """Filter opportunities according to the current module selections."""
+        filtered = opportunities
+
+        if industry:
+            filtered = [opp for opp in filtered if (opp.get('industry') or '') == industry]
+
+        if opportunity_type:
+            filtered = [opp for opp in filtered if (opp.get('type') or '') == opportunity_type]
+
+        if search_term:
+            search_lower = search_term.lower()
+            filtered = [
+                opp for opp in filtered
+                if search_lower in (opp.get('title') or '').lower()
+                or search_lower in (opp.get('description') or '').lower()
+                or search_lower in (opp.get('industry') or '').lower()
+            ]
+
+        return filtered
+
+    def filter_opportunities_by_review_status(self, opportunities, review_filter=''):
+        """Filter opportunities by saved review status."""
+        if not review_filter:
+            return opportunities
+        return [opp for opp in opportunities if (opp.get('review_status') or '') == review_filter]
+
+    def attach_review_statuses(self, user_id, opportunities, exclude_discarded=False):
+        """Attach the user's review status to each opportunity."""
+        opportunity_ids = [opp['id'] for opp in opportunities if opp.get('id')]
+        statuses = self.db.get_opportunity_review_statuses(user_id, opportunity_ids)
+
+        enriched = []
+        for opp in opportunities:
+            opp['review_status'] = statuses.get(opp.get('id'))
+            if exclude_discarded and opp['review_status'] == 'discarded':
+                continue
+            enriched.append(opp)
+
+        return enriched
+
+    def set_opportunity_review_action(self, user_id, opportunity_id, action):
+        """Persist review action for a user."""
+        return self.db.set_opportunity_review_status(user_id, opportunity_id, action)
+
+    def attach_golden_messages(self, opportunities):
+        """Attach a short GOLDEN explanation to each AI recommendation."""
+        enriched = []
+        for opp in opportunities:
+            reasoning = (opp.get('match_reasoning') or '').strip()
+            if reasoning:
+                opp['golden_message'] = f"GOLDEN detectó esta oportunidad para ti por: {reasoning}."
+            else:
+                industry = opp.get('industry') or 'tu perfil'
+                opp['golden_message'] = f"GOLDEN detectó esta oportunidad para ti por afinidad con {industry} y el contexto de tu red."
+            enriched.append(opp)
+        return enriched
+
+    def get_accessible_opportunity(self, user_id, opportunity_id):
+        """Obtener una oportunidad validando que el usuario pueda verla."""
+        opportunity = self.db.get_opportunity_by_id(opportunity_id)
+        if not opportunity:
+            return None
+
+        if opportunity['user_id'] == user_id:
+            return opportunity
+
+        tags = (opportunity.get('tags') or '').strip()
+        directed_user_ids = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        is_directed = bool(directed_user_ids)
+
+        if is_directed:
+            return opportunity if user_id in directed_user_ids else None
+
+        return opportunity if self.db.is_connected(user_id, opportunity['user_id']) else None
     
     def create_opportunity(self, opportunity_data):
         """Crear nueva oportunidad"""
@@ -692,8 +933,7 @@ class GoldenCoyotesAfterFeedback:
     
     def mark_opportunity_interest(self, user_id, opportunity_id):
         """Marcar oportunidad como de interés"""
-        # Mock implementation
-        pass
+        return self.set_opportunity_review_action(user_id, opportunity_id, 'interested')
     
     def send_contact_message(self, user_id, opportunity_id, message):
         """Enviar mensaje al dueño de oportunidad"""
@@ -770,6 +1010,7 @@ HOME_TEMPLATE = '''
                     <p class="lead mb-4">
                         Una comunidad social basada en economía colaborativa donde conectas 
                         con tu red "Friends & Family" para descubrir y compartir oportunidades de negocio.
+                        GOLDEN, nuestro agente IA, buscará matches relevantes para ti dentro de tu red y redes extendidas.
                     </p>
                     <div class="d-grid gap-2 d-md-flex">
                         <a href="{{ url_for('register') }}" class="btn btn-warning btn-lg px-4 me-md-2">
@@ -787,7 +1028,7 @@ HOME_TEMPLATE = '''
                             <div class="text-center">
                                 <i class="fas fa-play-circle fa-5x text-white mb-3"></i>
                                 <h4 class="text-white">Video Explicativo</h4>
-                                <p class="text-white-50">¿Qué es Golden Coyotes y cómo funciona?</p>
+                                <p class="text-white-50">Conoce cómo GOLDEN, nuestro agente IA, te ayuda a encontrar matches.</p>
                             </div>
                         </div>
                     </div>
@@ -832,7 +1073,7 @@ HOME_TEMPLATE = '''
                         <div class="card-body">
                             <i class="fas fa-search fa-3x text-info mb-3"></i>
                             <h5>Buscar Oportunidades</h5>
-                            <p class="text-muted">Explora oportunidades de tu red con IA inteligente</p>
+                            <p class="text-muted">Explora oportunidades de tu red con GOLDEN, nuestro agente IA</p>
                         </div>
                     </div>
                 </div>
@@ -930,7 +1171,7 @@ REGISTER_TEMPLATE = '''
                             <label class="form-label">Industrias de Interés (separadas por coma)</label>
                             <input type="text" class="form-control" name="industry_preferences" 
                                    placeholder="Tecnología, Fintech, E-commerce, Salud">
-                            <small class="text-muted">Esto ayudará a la IA a recomendarte oportunidades relevantes</small>
+                            <small class="text-muted">Esto ayudará a GOLDEN, nuestro agente IA, a recomendarte oportunidades relevantes</small>
                         </div>
 
                         <!-- Términos y Políticas -->
@@ -1122,6 +1363,12 @@ DASHBOARD_TEMPLATE = '''
             </a>
             <div class="navbar-nav ms-auto">
                 <span class="navbar-text me-3">¡Hola, {{ user_name }}!</span>
+                <a href="{{ url_for('mis_oportunidades_interes') }}" class="btn btn-outline-warning btn-sm me-2">
+                    <i class="fas fa-star"></i> Mis Intereses
+                </a>
+                <a href="{{ url_for('mis_oportunidades_standby') }}" class="btn btn-outline-secondary btn-sm me-2">
+                    <i class="fas fa-clock"></i> Stand By
+                </a>
                 <a href="{{ url_for('mis_oportunidades') }}" class="btn btn-outline-info btn-sm me-2">
                     <i class="fas fa-list"></i> Mis Oportunidades
                 </a>
@@ -1196,6 +1443,7 @@ DASHBOARD_TEMPLATE = '''
                         <h3>Busco Oportunidades</h3>
                         <p class="mb-0">Explora oportunidades de tu red</p>
                         <small class="opacity-75 mt-2">
+                            • El contador rojo = pendientes por abrir<br>
                             • Recomendaciones IA<br>
                             • Filtrar por industria<br>
                             • Marcar interesantes
@@ -1586,12 +1834,25 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
             transform: translateY(-5px); 
             box-shadow: 0 8px 15px rgba(0,0,0,0.1);
         }
+        .opportunities-scroll-box {
+            max-height: 70vh;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
         .ai-badge { 
             background: linear-gradient(45deg, #667eea, #764ba2); 
             color: white;
         }
         .interest-btn.active {
             background: #28a745;
+            color: white;
+        }
+        .standby-btn.active {
+            background: #6c757d;
+            color: white;
+        }
+        .discard-btn.active {
+            background: #dc3545;
             color: white;
         }
     </style>
@@ -1617,7 +1878,22 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                             {{ title }}
                         </h4>
                         <p class="card-text text-muted">Explora oportunidades de tu red Friends & Family</p>
+                        <div class="alert alert-info mb-3">
+                            <small>{{ explanation }}</small>
+                        </div>
+                        <div class="alert alert-light border mb-3">
+                            <small>
+                                <strong>Acciones:</strong> estrella amarilla = interés, reloj = stand by, bote rojo = descartar y quitar de esta bandeja.
+                            </small>
+                        </div>
+                        <div class="alert alert-info mb-0">
+                            <small>
+                                <strong>Contador rojo del dashboard:</strong> representa las oportunidades recomendadas por IA que todavía no has abierto.
+                                Cuando abres una oportunidad, el contador se ajusta automáticamente.
+                            </small>
+                        </div>
                         
+                        {% if page_mode == 'browse' %}
                         <!-- Toggle entre IA y Todas (según feedback) -->
                         <div class="btn-group w-100" role="group">
                             <input type="radio" class="btn-check" name="view_type" id="ai_view" {% if view_type == 'ai' %}checked{% endif %}>
@@ -1634,40 +1910,83 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                                 <small class="d-block">Toda tu red + redes extendidas</small>
                             </label>
                         </div>
+                        <div class="mt-3">
+                            <a href="{{ url_for('mis_oportunidades_interes') }}" class="btn btn-outline-warning">
+                                <i class="fas fa-star"></i> Ver Mis Oportunidades de Interés
+                            </a>
+                            <a href="{{ url_for('mis_oportunidades_standby') }}" class="btn btn-outline-secondary ms-2">
+                                <i class="fas fa-clock"></i> Ver Mis Stand By
+                            </a>
+                        </div>
+                        {% else %}
+                        <div class="mt-3">
+                            <a href="{{ url_for('buscar_oportunidad', view='ai') }}" class="btn btn-outline-primary me-2">
+                                <i class="fas fa-robot"></i> Volver a Recomendaciones de GOLDEN
+                            </a>
+                            <a href="{{ url_for('buscar_oportunidad', view='all') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-list"></i> Volver a Todas las Oportunidades
+                            </a>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Filtros -->
-        <div class="row mb-4">
+        <form class="row mb-4" method="GET" action="{{ url_for('buscar_oportunidad') if page_mode == 'browse' else url_for('mis_oportunidades_interes') }}">
+            {% if page_mode == 'browse' %}
+            <input type="hidden" name="view" value="{{ view_type }}">
+            {% endif %}
             <div class="col-md-4">
-                <select class="form-control" id="industry_filter">
+                <select class="form-control" id="industry_filter" name="industry">
                     <option value="">Todas las industrias</option>
-                    <option value="Tecnología">Tecnología</option>
-                    <option value="Fintech">Fintech</option>
-                    <option value="E-commerce">E-commerce</option>
-                    <option value="Salud">Salud</option>
-                    <option value="Educación">Educación</option>
+                    <option value="Tecnología" {% if selected_industry == 'Tecnología' %}selected{% endif %}>Tecnología</option>
+                    <option value="Fintech" {% if selected_industry == 'Fintech' %}selected{% endif %}>Fintech</option>
+                    <option value="E-commerce" {% if selected_industry == 'E-commerce' %}selected{% endif %}>E-commerce</option>
+                    <option value="Salud" {% if selected_industry == 'Salud' %}selected{% endif %}>Salud</option>
+                    <option value="Educación" {% if selected_industry == 'Educación' %}selected{% endif %}>Educación</option>
                 </select>
             </div>
             <div class="col-md-4">
-                <select class="form-control" id="type_filter">
+                <select class="form-control" id="type_filter" name="type">
                     <option value="">Producto y Servicio</option>
-                    <option value="producto">Solo Productos</option>
-                    <option value="servicio">Solo Servicios</option>
+                    <option value="producto" {% if selected_type == 'producto' %}selected{% endif %}>Solo Productos</option>
+                    <option value="servicio" {% if selected_type == 'servicio' %}selected{% endif %}>Solo Servicios</option>
                 </select>
             </div>
-            <div class="col-md-4">
-                <input type="text" class="form-control" id="search_filter" placeholder="Buscar por palabra clave...">
+            <div class="col-md-4 d-flex gap-2">
+                <input type="text" class="form-control" id="search_filter" name="search" placeholder="Buscar por palabra clave..." value="{{ search_term }}">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-filter"></i>
+                </button>
             </div>
+        </form>
+
+        {% if view_type == 'all' %}
+        <div class="alert alert-info mb-4">
+            <h5><i class="fas fa-info-circle"></i> Sobre "Todas las Oportunidades"</h5>
+            <p class="mb-0">
+                En esta sección ves todas las oportunidades disponibles dentro de tu red. Usa los filtros para acotar la búsqueda y luego revisa cada una en la bandeja: puedes marcar interés, dejarla en stand by o descartarla si no aplica para ti.
+            </p>
         </div>
+        {% endif %}
 
         <!-- Lista de Oportunidades -->
+        {% if view_type == 'all' %}
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0"><i class="fas fa-list"></i> Bandeja de oportunidades con scroll</h5>
+                <small class="text-muted">Explora la lista completa, baja con scroll y decide si te interesa, la dejas en stand by o la descartas.</small>
+            </div>
+            <div class="card-body">
+                <div class="opportunities-scroll-box">
+        {% endif %}
         <div class="row" id="opportunities-container">
             {% if opportunities %}
                 {% for opp in opportunities %}
                 <div class="col-lg-6 mb-4 opportunity-item" 
+                     data-opportunity-id="{{ opp.id }}"
                      data-industry="{{ opp.industry }}" 
                      data-type="{{ opp.type }}">
                     <div class="card opportunity-card h-100 border-0 shadow-sm">
@@ -1681,7 +2000,7 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                             </div>
                             {% if view_type == 'ai' %}
                                 <span class="ai-badge badge">
-                                    <i class="fas fa-brain"></i> 85% Match
+                                    <i class="fas fa-brain"></i> {{ ((opp.match_score or 0.85) * 100)|round|int }}% Match
                                 </span>
                             {% endif %}
                         </div>
@@ -1689,11 +2008,19 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                         <div class="card-body">
                             <h5 class="card-title">{{ opp.title }}</h5>
                             <p class="card-text text-muted">{{ opp.description[:150] }}{% if opp.description|length > 150 %}...{% endif %}</p>
+                            {% if view_type == 'ai' %}
+                            <div class="alert alert-warning py-2 mb-3">
+                                <small>
+                                    <i class="fas fa-robot"></i>
+                                    <strong>GOLDEN dice:</strong> {{ opp.golden_message }}
+                                </small>
+                            </div>
+                            {% endif %}
                             
                             <div class="row text-center mt-3">
                                 <div class="col-4">
                                     <small class="text-muted">Publicado por</small>
-                                    <div class="fw-bold">{{ opp.owner_name }}</div>
+                                    <div class="fw-bold">{{ opp.owner_name or opp.creator_name }}</div>
                                 </div>
                                 <div class="col-4">
                                     <small class="text-muted">Fecha</small>
@@ -1708,13 +2035,24 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                         
                         <div class="card-footer bg-transparent">
                             <div class="d-grid gap-2">
-                                <button class="btn btn-outline-warning interest-btn" 
-                                        onclick="markInterest('{{ opp.id }}', this)">
-                                    <i class="fas fa-star"></i> Marcar Interés
+                                <a href="{{ url_for('opportunity_detail', opportunity_id=opp.id) }}" class="btn btn-outline-info">
+                                    <i class="fas fa-eye"></i> Abrir oportunidad
+                                </a>
+                                <button class="btn btn-outline-warning interest-btn {% if opp.review_status == 'interested' %}active{% endif %}" 
+                                        onclick="setReviewAction('{{ opp.id }}', 'interested', this)">
+                                    <i class="fas fa-star"></i> {{ 'Me interesa' if opp.review_status == 'interested' else 'Marcar Interés' }}
+                                </button>
+                                <button class="btn btn-outline-secondary standby-btn {% if opp.review_status == 'standby' %}active{% endif %}" 
+                                        onclick="setReviewAction('{{ opp.id }}', 'standby', this)">
+                                    <i class="fas fa-clock"></i> {{ 'En stand by' if opp.review_status == 'standby' else 'Dejar en Stand By' }}
+                                </button>
+                                <button class="btn btn-outline-danger discard-btn {% if opp.review_status == 'discarded' %}active{% endif %}" 
+                                        onclick="setReviewAction('{{ opp.id }}', 'discarded', this)">
+                                    <i class="fas fa-trash"></i> {{ 'Descartada' if opp.review_status == 'discarded' else 'Descartar' }}
                                 </button>
                                 <button class="btn btn-primary" 
-                                        onclick="contactOwner('{{ opp.id }}', '{{ opp.owner_name }}')">
-                                    <i class="fas fa-comment"></i> Contactar a {{ opp.owner_name }}
+                                        onclick="contactOwner('{{ opp.id }}', '{{ opp.owner_name or opp.creator_name }}')">
+                                    <i class="fas fa-comment"></i> Contactar a {{ opp.owner_name or opp.creator_name }}
                                 </button>
                             </div>
                         </div>
@@ -1741,22 +2079,45 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
                 </div>
             {% endif %}
         </div>
-
-        <!-- Ventaja del Networking según feedback -->
-        {% if view_type == 'ai' %}
-        <div class="row mt-4">
-            <div class="col-12">
-                <div class="alert alert-info">
-                    <h5><i class="fas fa-lightbulb"></i> Ventaja del Networking IA</h5>
-                    <p class="mb-0">
-                        <strong>La IA puede identificar oportunidades de personas que NO están en tu red directa, 
-                        pero SÍ están en la red de tus contactos.</strong> ¡Esto te permite hacer networking puro 
-                        contactando a tu contacto para conectar con esa tercera persona!
-                    </p>
+        {% if view_type == 'all' %}
                 </div>
             </div>
         </div>
         {% endif %}
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="alert alert-info">
+                    {% if view_type == 'ai' %}
+                    <h5><i class="fas fa-lightbulb"></i> Ventaja del Networking IA</h5>
+                    <p class="mb-0">
+                        <strong>La IA puede identificar oportunidades de personas que NO están en tu red directa, 
+                        pero SÍ están en la red de tus contactos.</strong> Esto te permite hacer networking más fino
+                        partiendo de afinidad con tu perfil.
+                    </p>
+                    {% elif view_type == 'interest' %}
+                    <h5><i class="fas fa-star"></i> Tu Bandeja de Interés</h5>
+                    <p class="mb-0">
+                        <strong>Aquí concentras solo las oportunidades que marcaste en amarillo.</strong> Esta vista existe
+                        para que puedas retomarlas después sin perder de vista el resto de tus oportunidades.
+                    </p>
+                    {% elif view_type == 'standby' %}
+                    <h5><i class="fas fa-clock"></i> Tu Bandeja en Stand By</h5>
+                    <p class="mb-0">
+                        <strong>Aquí concentras las oportunidades que dejaste pendientes para revisar después.</strong>
+                        Es una bandeja intermedia entre lo prioritario y lo descartado.
+                    </p>
+                    {% else %}
+                    <h5><i class="fas fa-network-wired"></i> Vista Completa de Oportunidades</h5>
+                    <p class="mb-0">
+                        <strong>Aquí ves todas las oportunidades disponibles en tu red.</strong> Esta vista te ayuda a
+                        explorar manualmente, comparar opciones y detectar oportunidades que quizá la IA no priorizó,
+                        pero que sí pueden servirte por contexto, memoria o un contacto reciente.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Modal para contactar dueño -->
@@ -1793,18 +2154,31 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
             window.location.href = `?view=${viewType}`;
         }
 
-        // Marcar oportunidad como de interés
-        function markInterest(oppId, button) {
-            fetch('/api/mark-interest', {
+        function setReviewAction(oppId, action, button) {
+            fetch('/api/opportunity-review-action', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({opportunity_id: oppId})
+                body: JSON.stringify({opportunity_id: oppId, action: action})
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    const card = button.closest('.opportunity-item');
+                    const buttons = card.querySelectorAll('.interest-btn, .standby-btn, .discard-btn');
+                    buttons.forEach(btn => btn.classList.remove('active'));
+
+                    const labels = {
+                        interested: '<i class="fas fa-star"></i> Me interesa',
+                        standby: '<i class="fas fa-clock"></i> En stand by',
+                        discarded: '<i class="fas fa-trash"></i> Descartada'
+                    };
+
                     button.classList.add('active');
-                    button.innerHTML = '<i class="fas fa-star"></i> ¡Marcado!';
+                    button.innerHTML = labels[action];
+
+                    if (action === 'discarded') {
+                        card.remove();
+                    }
                 }
             });
         }
@@ -1839,25 +2213,6 @@ BUSCAR_OPORTUNIDAD_TEMPLATE = '''
             });
         }
 
-        // Filtros en tiempo real
-        document.getElementById('industry_filter').addEventListener('change', filterOpportunities);
-        document.getElementById('type_filter').addEventListener('change', filterOpportunities);
-        document.getElementById('search_filter').addEventListener('input', filterOpportunities);
-
-        function filterOpportunities() {
-            const industry = document.getElementById('industry_filter').value;
-            const type = document.getElementById('type_filter').value;
-            const search = document.getElementById('search_filter').value.toLowerCase();
-
-            document.querySelectorAll('.opportunity-item').forEach(item => {
-                const matchIndustry = !industry || item.dataset.industry === industry;
-                const matchType = !type || item.dataset.type === type;
-                const matchSearch = !search || 
-                    item.textContent.toLowerCase().includes(search);
-
-                item.style.display = (matchIndustry && matchType && matchSearch) ? 'block' : 'none';
-            });
-        }
     </script>
 </body>
 </html>
@@ -1996,10 +2351,9 @@ MIS_OPORTUNIDADES_DIRIGIDAS_TEMPLATE = '''
                                     </button>
                                 </div>
                                 <div class="col-12 mt-2">
-                                    <button class="btn btn-outline-primary w-100" 
-                                            onclick="viewFullOpportunity('{{ opp.id }}')">
+                                    <a href="{{ url_for('opportunity_detail', opportunity_id=opp.id) }}" class="btn btn-outline-primary w-100">
                                         <i class="fas fa-eye"></i> Ver Detalles Completos
-                                    </button>
+                                    </a>
                                 </div>
                             </div>
                         </div>
@@ -2105,21 +2459,6 @@ MIS_OPORTUNIDADES_DIRIGIDAS_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- Modal para detalles completos -->
-    <div class="modal fade" id="detailsModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Detalles de la Oportunidad</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body" id="opportunity-details">
-                    <!-- Se llena dinámicamente -->
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentOpportunityId = null;
@@ -2189,43 +2528,6 @@ MIS_OPORTUNIDADES_DIRIGIDAS_TEMPLATE = '''
             });
         }
 
-        // Ver detalles completos
-        function viewFullOpportunity(oppId) {
-            fetch(`/api/opportunity-details/${oppId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    const opp = data.opportunity;
-                    document.getElementById('opportunity-details').innerHTML = `
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h6>Información Básica</h6>
-                                <p><strong>Título:</strong> ${opp.title}</p>
-                                <p><strong>Industria:</strong> ${opp.industry}</p>
-                                <p><strong>Tipo:</strong> ${opp.type}</p>
-                                <p><strong>Remitente:</strong> ${opp.sender_name}</p>
-                            </div>
-                            <div class="col-md-6">
-                                <h6>Detalles</h6>
-                                <p><strong>Enviado:</strong> ${opp.sent_at}</p>
-                                <p><strong>Estado:</strong> ${opp.status}</p>
-                            </div>
-                            <div class="col-12">
-                                <h6>Descripción Completa</h6>
-                                <p>${opp.description}</p>
-                            </div>
-                        </div>
-                    `;
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                document.getElementById('opportunity-details').innerHTML = 
-                    '<p class="text-danger">Error al cargar detalles</p>';
-            });
-            
-            new bootstrap.Modal(document.getElementById('detailsModal')).show();
-        }
     </script>
 </body>
 </html>
@@ -2685,6 +2987,9 @@ MIS_OPORTUNIDADES_TEMPLATE = '''
                                             <i class="fas fa-clock"></i>
                                             Publicada: {{ opp.created_at }}
                                         </p>
+                                        <a href="{{ url_for('opportunity_detail', opportunity_id=opp.id) }}" class="btn btn-outline-info btn-sm">
+                                            <i class="fas fa-eye"></i> Abrir oportunidad
+                                        </a>
                                     </div>
                                 </div>
                             </div>
@@ -2699,6 +3004,86 @@ MIS_OPORTUNIDADES_TEMPLATE = '''
                             <i class="fas fa-plus"></i> Crear Oportunidad
                         </a>
                     </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+'''
+
+OPPORTUNITY_DETAIL_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ opportunity.title }} - Golden Coyotes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
+            <a href="{{ back_url }}" class="btn btn-outline-light">
+                <i class="fas fa-arrow-left"></i> Volver
+            </a>
+            <span class="navbar-brand">Detalle de Oportunidad</span>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <div class="row">
+            <div class="col-lg-8 mb-4">
+                <div class="card shadow-sm border-0 h-100">
+                    {% if opportunity.image_url %}
+                        <img src="{{ opportunity.image_url }}" class="card-img-top" alt="{{ opportunity.title }}" style="max-height: 380px; object-fit: cover;">
+                    {% endif %}
+                    <div class="card-body">
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge bg-{{ 'primary' if opportunity.type == 'producto' else 'success' }}">{{ opportunity.type|title }}</span>
+                            <span class="badge bg-secondary">{{ opportunity.industry or 'Sin industria' }}</span>
+                            <span class="badge bg-{{ 'warning text-dark' if opportunity.tags else 'info text-dark' }}">
+                                {{ 'Dirigida' if opportunity.tags else 'Pública' }}
+                            </span>
+                        </div>
+                        <h1 class="h3 mb-3">{{ opportunity.title }}</h1>
+                        <p class="text-muted mb-4">Revisión completa de la oportunidad y sus características.</p>
+
+                        <h5>Descripción</h5>
+                        <p class="mb-0" style="white-space: pre-line;">{{ opportunity.description }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-list-check text-primary"></i> Características</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Publicado por:</strong><br>{{ opportunity.creator_name }}</p>
+                        <p><strong>Email de contacto:</strong><br>{{ opportunity.creator_email or 'No disponible' }}</p>
+                        <p><strong>Industria:</strong><br>{{ opportunity.industry or 'No especificada' }}</p>
+                        <p><strong>Tipo:</strong><br>{{ opportunity.type|title }}</p>
+                        <p><strong>Fecha de publicación:</strong><br>{{ opportunity.created_at[:10] if opportunity.created_at else 'No disponible' }}</p>
+                        <p><strong>Vigencia:</strong><br>{{ opportunity.expiration_date or 'No especificada' }}</p>
+                        <p class="mb-0"><strong>Estado de visibilidad:</strong><br>{{ 'Dirigida a contactos específicos' if opportunity.tags else 'Visible para tu red' }}</p>
+                    </div>
+                </div>
+
+                {% if not is_owner %}
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title">Siguiente acción</h5>
+                        <p class="text-muted">Ya puedes revisar esta oportunidad a detalle. El siguiente paso es contactar al dueño si te interesa.</p>
+                        <a href="{{ url_for('buscar_oportunidad') }}" class="btn btn-primary w-100">
+                            <i class="fas fa-search"></i> Volver a oportunidades
+                        </a>
+                    </div>
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -2739,6 +3124,9 @@ OPPORTUNITIES_STATUS_TEMPLATE = '''
             <div class="card-header bg-warning">
                 <h4 class="mb-0"><i class="fas fa-chart-line"></i> Estado de Todas las Oportunidades</h4>
                 <p class="mb-0 mt-2 opacity-75">Monitoreo de vigencia de oportunidades en la plataforma</p>
+                <small class="d-block mt-2">
+                    Validación actual: en tiempo real cada vez que entras a esta vista. Recomendación operativa: revisar y depurar diariamente las oportunidades por vencer o vencidas.
+                </small>
             </div>
             <div class="card-body">
                 {% if opportunities %}
@@ -2783,7 +3171,11 @@ OPPORTUNITIES_STATUS_TEMPLATE = '''
                             <tbody>
                                 {% for opp in opportunities %}
                                     <tr class="{% if opp.is_expired %}status-expired{% elif opp.is_expiring_soon %}status-expiring{% else %}status-active{% endif %}">
-                                        <td>{{ opp.title }}</td>
+                                        <td>
+                                            <a href="{{ url_for('opportunity_detail', opportunity_id=opp.id) }}" class="text-decoration-none fw-bold">
+                                                {{ opp.title }}
+                                            </a>
+                                        </td>
                                         <td>{{ opp.creator_name }}</td>
                                         <td><span class="badge bg-primary">{{ opp.type }}</span></td>
                                         <td>

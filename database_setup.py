@@ -6,6 +6,7 @@ SQLite database with proper persistence and relationships
 
 import sqlite3
 import hashlib
+import json
 import os
 import uuid
 from datetime import datetime
@@ -402,6 +403,169 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error getting opportunities: {e}")
             return []
+        finally:
+            conn.close()
+
+    def get_opportunity_by_id(self, opportunity_id):
+        """Get a single active opportunity by id."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT o.*, u.name as creator_name, u.email as creator_email
+                FROM opportunities o
+                JOIN users u ON o.user_id = u.id
+                WHERE o.id = ? AND o.is_active = 1
+                LIMIT 1
+            ''', (opportunity_id,))
+
+            result = cursor.fetchone()
+            if not result:
+                return None
+
+            columns = [description[0] for description in cursor.description]
+            return dict(zip(columns, result))
+        except Exception as e:
+            print(f"Error getting opportunity by id: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def record_opportunity_view(self, user_id, opportunity_id):
+        """Record that a user viewed an opportunity once."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT id FROM interactions
+                WHERE user_id = ? AND opportunity_id = ? AND type = 'view_opportunity'
+                LIMIT 1
+            ''', (user_id, opportunity_id))
+
+            existing = cursor.fetchone()
+            if existing:
+                return existing[0]
+
+            interaction_id = str(uuid.uuid4())
+            cursor.execute('''
+                INSERT INTO interactions (id, user_id, opportunity_id, type, metadata)
+                VALUES (?, ?, ?, 'view_opportunity', ?)
+            ''', (interaction_id, user_id, opportunity_id, '{}'))
+
+            cursor.execute('''
+                UPDATE opportunities
+                SET views = COALESCE(views, 0) + 1
+                WHERE id = ?
+            ''', (opportunity_id,))
+
+            conn.commit()
+            return interaction_id
+        except Exception as e:
+            print(f"Error recording opportunity view: {e}")
+            conn.rollback()
+            return None
+        finally:
+            conn.close()
+
+    def count_unviewed_opportunities(self, user_id, opportunity_ids):
+        """Count opportunities the user has not opened yet."""
+        if not opportunity_ids:
+            return 0
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            placeholders = ','.join('?' for _ in opportunity_ids)
+            cursor.execute(f'''
+                SELECT COUNT(*)
+                FROM opportunities o
+                WHERE o.id IN ({placeholders})
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM interactions i
+                    WHERE i.user_id = ?
+                    AND i.opportunity_id = o.id
+                    AND i.type = 'view_opportunity'
+                )
+            ''', [*opportunity_ids, user_id])
+
+            return cursor.fetchone()[0]
+        except Exception as e:
+            print(f"Error counting unviewed opportunities: {e}")
+            return len(opportunity_ids)
+        finally:
+            conn.close()
+
+    def set_opportunity_review_status(self, user_id, opportunity_id, status):
+        """Persist the user's review decision for an opportunity."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT id FROM interactions
+                WHERE user_id = ? AND opportunity_id = ? AND type = 'opportunity_review_status'
+                LIMIT 1
+            ''', (user_id, opportunity_id))
+
+            payload = json.dumps({'status': status})
+            existing = cursor.fetchone()
+
+            if existing:
+                cursor.execute('''
+                    UPDATE interactions
+                    SET metadata = ?, created_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (payload, existing[0]))
+            else:
+                interaction_id = str(uuid.uuid4())
+                cursor.execute('''
+                    INSERT INTO interactions (id, user_id, opportunity_id, type, metadata)
+                    VALUES (?, ?, ?, 'opportunity_review_status', ?)
+                ''', (interaction_id, user_id, opportunity_id, payload))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error setting opportunity review status: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def get_opportunity_review_statuses(self, user_id, opportunity_ids):
+        """Get review statuses for a set of opportunities."""
+        if not opportunity_ids:
+            return {}
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            placeholders = ','.join('?' for _ in opportunity_ids)
+            cursor.execute(f'''
+                SELECT opportunity_id, metadata
+                FROM interactions
+                WHERE user_id = ?
+                AND type = 'opportunity_review_status'
+                AND opportunity_id IN ({placeholders})
+            ''', [user_id, *opportunity_ids])
+
+            statuses = {}
+            for opportunity_id, metadata in cursor.fetchall():
+                try:
+                    parsed = json.loads(metadata or '{}')
+                    statuses[opportunity_id] = parsed.get('status')
+                except Exception:
+                    continue
+
+            return statuses
+        except Exception as e:
+            print(f"Error getting opportunity review statuses: {e}")
+            return {}
         finally:
             conn.close()
     
